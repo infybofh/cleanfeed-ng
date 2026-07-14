@@ -1,3 +1,17 @@
+<p align="center">
+  <a href="https://github.com/infybofh/cleanfeed-ng">
+    <img src="docs/social-banner.png"
+         alt="cleanfeed-ng"
+         width="100%">
+  </a>
+
+![Release](https://img.shields.io/github/v/release/infybofh/cleanfeed-ng)
+![License](https://img.shields.io/github/license/infybofh/cleanfeed-ng)
+![Issues](https://img.shields.io/github/issues/infybofh/cleanfeed-ng)
+![Perl](https://img.shields.io/badge/Perl-5.38+-blue)
+![INN](https://img.shields.io/badge/INN-2.*-green)
+</p>
+
 # cleanfeed-ng
 
 `cleanfeed-ng` is a maintained, lightweight continuation of the historical Cleanfeed filter for the Perl filtering interface of INN `innd`. It is designed for server-to-server Usenet transit filtering, with particular attention to predictable behaviour, low overhead, safe configuration changes, and useful diagnostics.
