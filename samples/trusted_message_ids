@@ -1,0 +1,10 @@
+# trusted_message_ids
+# ===================
+# One regex per line for tightly controlled Message-ID formats.  Do not trust a
+# whole domain unless only trusted software can generate IDs there.
+#
+# FAQ sequence:
+# ^<faq-[0-9]{1,10}@example\.invalid>$
+#
+# UUID-like locally generated IDs:
+# ^<[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}@bot\.example>$

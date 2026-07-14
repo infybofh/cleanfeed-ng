@@ -1,0 +1,22 @@
+# bad_hosts_central
+# =================
+# Same syntax and matching semantics as bad_hosts, but intended for a shared or
+# centrally maintained list. Local exceptions belong in bad_hosts.
+#
+# Every active line should have documented evidence, a maintainer, an inclusion
+# criterion, and a removal criterion in the central-list repository.
+#
+# Exact host:
+# ^reader99\.abusive-provider\.example$
+#
+# Bounded numbered farm:
+# ^reader(?:[1-9]|1[0-9]|20)\.abusive-provider\.example$
+#
+# Two exact IPv4 addresses:
+# ^(?:192\.0\.2\.44|192\.0\.2\.45)$
+#
+# One IPv6 documentation prefix:
+# ^2001:db8:bad:
+#
+# Keep this file atomically replaceable. The mtime reload mechanism retains the
+# last successfully compiled expression when an update is invalid.

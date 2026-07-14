@@ -1,0 +1,32 @@
+# bad_paths
+# =========
+# One active Perl regular expression per line, matched against the complete
+# Path header.  Path tokens are separated by an exclamation mark (!).
+#
+# All examples are commented out and therefore inactive.  Remove the leading
+# "# " only after copying a real Path header into a test file and verifying the
+# expression with cleanfeed-admin.pl.
+#
+# Exact token at any position:
+# (?:^|!)bad-transit\.example(?:!|$)
+#
+# Why the boundaries matter:
+#   bad-transit\.example
+# also matches "not-bad-transit.example.net".  The (?:^|!) and (?:!|$)
+# alternatives require a complete Path token.
+#
+# A numbered farm, for example reader1, reader27, reader300:
+# (?:^|!)reader[0-9]+\.abusive-provider\.example(?:!|$)
+#
+# One of several exact transit names:
+# (?:^|!)(?:feed-a|feed-b|feed-c)\.example\.net(?:!|$)
+#
+# A literal .POSTED marker attached to one exact host:
+# (?:^|!)reader12\.example\.net\.POSTED(?:!|$)
+#
+# A bounded hexadecimal identifier used by a broken gateway:
+# (?:^|!)gateway-[A-Fa-f0-9]{8}\.example(?:!|$)
+#
+# Do not use generic fragments such as "news", "reader", "posted", or
+# ".*example.*".  Path-based rejection is immediate and broad matches can cut
+# off an entire legitimate feed.

@@ -1,0 +1,16 @@
+# badurls/logfile_list
+# --------------------
+# One absolute Cleanfeed log-file path per line. badurl.py scans these files for
+# URL evidence. Blank lines and lines beginning with # are ignored.
+#
+# Examples for a traditional Cleanfeed installation (disabled):
+# /usr/local/news/cleanfeed/log/cf.binary
+# /usr/local/news/cleanfeed/log/cf.hosts
+# /usr/local/news/cleanfeed/log/cf.path
+# /usr/local/news/cleanfeed/log/cf.scoring
+# /usr/local/news/cleanfeed/log/emp.fsl
+# /usr/local/news/cleanfeed/log/emp.md5
+# /usr/local/news/cleanfeed/log/emp.phl
+# /usr/local/news/cleanfeed/log/emp.phn
+#
+# Use only files that exist and are readable by the account running badurl.py.

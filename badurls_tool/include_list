@@ -1,0 +1,12 @@
+# OPTIONAL MANUAL INCLUDE LIST
+# ============================
+# One URL/host value per line. Blank lines and lines beginning with # are
+# ignored by the offline badurls utility.
+#
+# Entries listed here are forced into the generated output even when their
+# observed count has not reached the configured threshold. Use this only for
+# narrowly verified abusive hosts or URL fragments.
+#
+# Examples (disabled):
+# malware-campaign.example
+# click-0123456789ab.tracking-abuse.example

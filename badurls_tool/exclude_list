@@ -1,0 +1,17 @@
+# badurls/exclude_list
+# --------------------
+# One domain or identifying substring per line. Matching URLs are excluded from
+# badurls extraction/aggregation. Blank lines and lines beginning with # are
+# ignored by the 2026 Python utility.
+#
+# Add domains that are commonly cited in legitimate discussion or abuse reports
+# and must never be promoted automatically into bad_url rules.
+#
+# Safe examples (disabled):
+# wikipedia.org
+# ietf.org
+# github.com
+# your-own-domain.example
+#
+# Prefer exact registrable domains. Avoid generic fragments such as "news",
+# "mail", ".com", or "cdn".

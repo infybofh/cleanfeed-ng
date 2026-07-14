@@ -1,0 +1,29 @@
+# bad_url
+# =======
+# One Perl regular expression per line for URLs/domains found in article text.
+# A hit normally contributes bad_url_score to the scoring engine; it is not by
+# itself always an immediate rejection.  Do not write surrounding /.../ regex
+# delimiters.
+#
+# Exact domain and every subdomain:
+# (?:[a-z0-9-]+\.)*malware-domain\.example(?:/|$)
+#
+# Only one exact campaign path on a legitimate host:
+# legitimate-host\.example/promo/campaign-4711(?:[/?#]|$)
+#
+# Generated tracking host with exactly twelve hexadecimal characters:
+# click-[a-f0-9]{12}\.tracking-abuse\.example(?:/|$)
+#
+# Either HTTP or HTTPS is normally removed/handled by Cleanfeed before this
+# expression is applied; match the host/path, not a hard-coded protocol unless
+# a local test proves otherwise.
+#
+# Two related domains without duplicating the suffix:
+# (?:drop-one|drop-two)\.bad-network\.example(?:/|$)
+#
+# Punycode/IDN host example (match the ASCII form seen in logs):
+# xn--example-campaign-9db\.invalid(?:/|$)
+#
+# Avoid bare shorteners, public cloud/storage hosts, common TLDs, or broad
+# expressions such as ".*download.*".  Shared services need path- or
+# campaign-specific evidence.

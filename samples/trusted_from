@@ -1,0 +1,10 @@
+# trusted_from
+# ============
+# One regex per line for stable sender identities.  Sender addresses are easy
+# to forge, so use this only together with a trusted Path/host when possible.
+#
+# Exact FAQ bot identity:
+# ^Trusted FAQ Bot\s*<faq-bot@example\.invalid>$
+#
+# Bare or angle-bracket form:
+# (?:^|<)moderator@example\.invalid(?:>|$)

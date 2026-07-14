@@ -1,0 +1,20 @@
+# bad_cancel_paths
+# ================
+# One regex per line, matched against Path information only for cancel control
+# messages. This is local policy; Cancel-Lock and Cancel-Key verification stays
+# in INN and is intentionally not duplicated here.
+#
+# Exact untrusted injection token:
+# (?:^|!)reader\.untrusted-peer\.example(?:!|$)
+#
+# Exact host with optional literal .POSTED suffix:
+# (?:^|!)reader\.untrusted-peer\.example(?:\.POSTED)?(?:!|$)
+#
+# Numbered abusive cancel source:
+# (?:^|!)cancel-source[0-9]{1,3}\.example(?:!|$)
+#
+# Two exact sources:
+# (?:^|!)(?:cancel-a|cancel-b)\.example\.net(?:!|$)
+#
+# Do not block a complete provider until you understand its cancel policy and
+# have checked INN's native authenticated-cancel handling.

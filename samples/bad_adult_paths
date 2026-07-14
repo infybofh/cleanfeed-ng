@@ -1,0 +1,19 @@
+# bad_adult_paths
+# ===============
+# One regex per line for Path/injection sources that are unacceptable only when
+# the article is posted into groups classified as adult groups.
+#
+# Exact source:
+# (?:^|!)reader\.abusive-provider\.example(?:!|$)
+#
+# Optional .POSTED suffix:
+# (?:^|!)reader\.abusive-provider\.example(?:\.POSTED)?(?:!|$)
+#
+# Numbered farm:
+# (?:^|!)reader[0-9]+\.abusive-provider\.example(?:!|$)
+#
+# Two exact providers:
+# (?:^|!)(?:feed-a\.example|feed-b\.example)(?:!|$)
+#
+# Confirm that adult_groups/not_adult_groups classify the destinations as you
+# expect. Avoid generic words such as adult, news, reader, posted, or sex.

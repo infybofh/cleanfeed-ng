@@ -1,0 +1,21 @@
+# bad_url_central
+# ===============
+# Same scoring semantics as bad_url, but intended for a shared/central source.
+# Cleanfeed itself performs no network download; an external cron job or timer
+# should validate and atomically replace this file.
+#
+# Exact domain and subdomains:
+# (?:[a-z0-9-]+\.)*malware-campaign\.example(?:/|$)
+#
+# Exact path on a shared legitimate host:
+# legitimate-host\.example/drop/campaign-4711(?:[/?#]|$)
+#
+# Bounded generated hosts:
+# click-[a-f0-9]{12}\.tracking-abuse\.example(?:/|$)
+#
+# Two campaign domains:
+# (?:payload-one|payload-two)\.bad-network\.example(?:/|$)
+#
+# Entries must have published criteria and expiry/review rules. Never add an
+# entire URL shortener, cloud provider, public paste service, or top-level
+# domain because of one incident.

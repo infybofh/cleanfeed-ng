@@ -1,0 +1,31 @@
+# bad_hosts
+# =========
+# One Perl regular expression per line, matched against the posting host or
+# injection host extracted by Cleanfeed.  Confirm the exact extracted value in
+# audit logs before enabling a rule; it may differ from the first visible host
+# in Path.
+#
+# Exact hostname:
+# ^reader23\.abusive-provider\.example$
+#
+# Any numbered reader in one domain:
+# ^reader[0-9]+\.abusive-provider\.example$
+#
+# Readers 10 through 29 only:
+# ^reader(?:1[0-9]|2[0-9])\.abusive-provider\.example$
+#
+# Two exact hosts:
+# ^(?:reader7|reader19)\.example\.net$
+#
+# IPv4 documentation range 192.0.2.16 through 192.0.2.31:
+# ^192\.0\.2\.(?:1[6-9]|2[0-9]|3[01])$
+#
+# One exact IPv6 address.  Colons are literal in Perl regexes:
+# ^2001:db8:1234::42$
+#
+# One documented IPv6 prefix.  Anchor the beginning but intentionally permit
+# the remaining host bits:
+# ^2001:db8:1234:
+#
+# Avoid blocking a whole commercial provider because of one abusive account.
+# Prefer the smallest stable hostname/address range supported by evidence.

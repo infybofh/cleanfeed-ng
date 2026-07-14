@@ -1,0 +1,21 @@
+# bad_subject
+# ===========
+# One Perl regular expression per line, matched against Subject.  A hit is a
+# direct rejection, so every active expression should identify a campaign, not
+# merely a topic or ordinary word.
+#
+# Exact recurring form with a numeric suffix:
+# ^Exclusive campaign 2026 #[0-9]{4,8}$
+#
+# Literal square brackets must be escaped:
+# ^\[ABUSE-CAMPAIGN-4711\]
+#
+# Two known variants followed by a 12-character hexadecimal reference:
+# ^(?:Campaign Alpha|Campaign Beta) - ref [A-F0-9]{12}$
+#
+# Optional word and bounded whitespace:
+# ^Offer(?: update)?\s{1,3}ID-[0-9]{6}$
+#
+# Case-insensitive matching is normally provided by Cleanfeed; do not repeat
+# every upper/lowercase spelling.  Avoid generic words such as "free", "sale",
+# "help", currencies, punctuation-only patterns, or file extensions.

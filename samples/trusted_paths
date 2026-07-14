@@ -1,0 +1,12 @@
+# trusted_paths
+# =============
+# Trusted sources do not automatically bypass every rule.  The exact bypasses
+# are controlled by trusted_bypass_* options in cleanfeed.local.
+#
+# Exact Path token:
+# (?:^|!)trusted-transit\.example(?:!|$)
+#
+# Any one of three trusted feeds:
+# (?:^|!)(?:feed1|feed2|feed3)\.example\.net(?:!|$)
+#
+# Keep boundaries.  A bare hostname fragment may trust unrelated paths.

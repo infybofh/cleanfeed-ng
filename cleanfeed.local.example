@@ -1,0 +1,501 @@
+# cleanfeed.local.example
+# =======================
+# Canonical, exhaustive configuration example for cleanfeed-ng.
+#
+# Copy this file to the directory selected by CLEANFEED_CONFIG_DIR and rename
+# it to cleanfeed.local.  The main filter deliberately keeps site policy out of
+# the program file, so upgrades can replace "cleanfeed" without overwriting
+# local choices.
+#
+# This file is intentionally verbose.  It is both a working example and the
+# primary configuration reference.  Every runtime option in this release is
+# represented below.  Administrators are encouraged to keep their production
+# copy under version control and to include a short comment above every local
+# deviation explaining who requested it, why it exists, and when it should be
+# reviewed.
+#
+# SAFE CHANGE PROCEDURE
+# ---------------------
+# 1. Edit a copy, never the only production file.
+# 2. Run:  perl -c cleanfeed.local
+# 3. Run:  ./cleanfeed-admin.pl --config-dir /path/to/config --check-config
+# 4. Put new behavioural checks in "audit" first.
+# 5. Inspect news.notice and the cleanfeed status file.
+# 6. Change audit to reject only after legitimate traffic has been sampled.
+#
+# BASIC PERL SYNTAX
+# -----------------
+# * A string uses single quotes:  'value'
+# * A number is written without quotes:  60
+# * A boolean is 1 (enabled) or 0 (disabled).
+# * Every key/value entry ends with a comma.
+# * A comment starts with # and continues to the end of the physical line.
+# * A long string may be joined with the dot operator:
+#       example => '^one\\.' .
+#                  '|^two\\.',
+#
+# PERL REGULAR EXPRESSIONS IN THIS FILE
+# -------------------------------------
+# Regex values are fragments.  Do NOT add surrounding /.../ delimiters.
+# Dots are special and normally must be escaped:  example\\.com
+#
+# Frequently used building blocks:
+#   ^                 beginning of the tested string
+#   $                 end of the tested string
+#   \\.                a literal dot
+#   (?:a|b)           either "a" or "b", without creating a capture group
+#   [0-9]+            one or more decimal digits
+#   [A-Za-z0-9_-]+    one or more characters from the listed set
+#   ?                 previous item is optional
+#   *                 previous item occurs zero or more times
+#   +                 previous item occurs one or more times
+#   {2,5}             previous item occurs from two to five times
+#   \\s                whitespace
+#   \\Q...\\E          quote arbitrary literal text inside a Perl regex
+#
+# Examples:
+#   Exact newsgroup:
+#       '^example\\.test$'
+#
+#   One hierarchy and all descendants:
+#       '^example\\.binaries(?:\\.|$)'
+#
+#   Either of two exact hosts:
+#       '^(?:reader1|reader2)\\.example\\.net$'
+#
+#   A numbered reader farm:
+#       '^reader[0-9]+\\.example\\.net$'
+#
+#   One exact Path token at any position (Path uses ! separators):
+#       '(?:^|!)feed\\.example\\.net(?:!|$)'
+#
+# Avoid broad expressions such as "test", "news", ".*spam.*", or a bare
+# public mail domain.  They often match legitimate traffic.  Prefer anchors,
+# escaped dots, token boundaries, and campaign-specific identifiers.
+#
+# GENERAL VALUE RULES
+# -------------------
+# * Intervals are seconds unless a comment explicitly says otherwise.
+# * Empty output paths disable the corresponding output.
+# * Zero often means disabled or unlimited, but read each option's comment.
+# * Modes are exact lowercase words.  Do not invent abbreviations.
+# * Values below are shipped defaults, not universal recommendations.
+#
+# IMPORTANT: audit is not reject.  Audit logs and counts a finding while still
+# accepting the article.  It exists specifically to prevent a new heuristic or
+# a mistaken local regex from silently discarding legitimate Usenet traffic.
+
+sub local_config {
+    %config_local = (
+    verbose => 1,           # verbose rejection reasons in news.notice/logfile?
+    aggressive => 1,            # 1 enables stricter legacy checks; use 0 for a more conservative policy
+    maxgroups => 14,            # maximum number of groups in a crosspost
+    block_binaries => 1,        # block misplaced binaries
+    block_all_binaries => 0,    # Reject all binary regardless of distribution
+    block_late_cancels => 0,    # block cancels of rejected articles
+    block_user_spamcancels => 1,# reject spam cancels
+    block_user_cancels => 0,    # accept only spam cancels
+    block_extra_reposts => 1,   # block reposts for articles not cancelled
+
+    do_md5 => 1,                # do the md5 checks?
+    do_phl => 1,                # do the posting-host/lines EMP check?
+    do_phn => 1,                # do the posting-host/newsgroups EMP check?
+    do_phr => 1,                # do posting-host (high risk groups) check?
+    do_fsl => 1,                # do the from/subject/lines EMP check?
+    do_scoring_filter => 1,     # use the scoring filter?
+    do_ratio_scoring => 0,      # Score articles based on Caps/Sym/URL ratios?
+    bad_url_score => 5,         # What score to apply to bad_url hits
+
+    do_emp_dump => 1,           # dump EMP histories to a file for persistence?
+    emp_dump_file => '',        # file to dump EMP histories to
+
+    MD5RateCutoff => 5,         # reject if this many copies are in the history
+    MD5RateCeiling => 85,       # only count this high
+    MD5RateBaseInterval => 7200,# How long to wait before decrementing the count
+    PHLRateCutoff => 20,
+    PHLRateCeiling => 80,
+    PHLRateBaseInterval => 3600,
+    PHNRateCutoff => 150,
+    PHNRateCeiling => 200,
+    PHNRateBaseInterval => 1800,
+    PHRRateCutoff => 10,
+    PHRRateCeiling => 80,
+    PHRRateBaseInterval => 3600,
+    FSLRateCutoff => 20,
+    FSLRateCeiling => 40,
+    FSLRateBaseInterval => 1800,
+
+    fuzzy_md5 => 1,             # screw around with the body before md5ing?
+    fuzzy_max_length => 700,    # don't screw with bodies over this many lines
+    md5_max_length => 2000,     # don't md5 articles over this many lines
+    trim_interval => 900,       # trim hashes every N seconds
+    stats_interval => 3600,     # write status file every N seconds
+    MIDmaxlife => 4,            # time to keep rejected message-ids, in hours
+    md5_skips_followups => 1,   # avoid MD5 check on articles with References?
+    phn_aggressive => 1,        # use path for phn filter when no posting host
+    phr_aggressive => 1,        # use path for phr filter when no posting host
+    do_mid_filter => 1,         # use the message-id CHECK filter? (INN only)
+    do_supersedes_filter => 1,  # do the excessive supersedes filter?
+    supersedes_mode => 'reject',   # off|audit|reject
+    supersedes_window => 900,     # seconds; recommended 60..86400
+    supersedes_ceiling => 50,     # retained count ceiling; 1..100000
+    supersedes_max_faq => 45,
+    supersedes_max_unmoderated => 6,
+    supersedes_max_moderated => 10,
+    supersedes_max_all_moderated => 35,
+    supersedes_max_unknown_active => 10,
+    drop_useless_controls => 1, # drop sendsys, senduuname, version control msg
+    drop_ihave_sendme => 1,     # drop ihave, sendme control messages
+    bad_rate_reload => 10000,   # Legacy article-count reload threshold; 0 disables this trigger.
+
+    # External list reload strategy. "mtime" checks timestamps only; "articles"
+    # preserves the historical counter behavior; "both" enables both triggers.
+    bad_reload_mode => 'mtime',
+    bad_reload_interval => 60,       # Seconds between timestamp checks. Recommended: 30..3600.
+
+    # Defensive limits for expressions loaded from bad_* and trusted_* files.
+    external_regex_max_length => 1048576, # Maximum combined regex length in characters; default 1 MiB, 0 is not recommended.
+    external_regex_max_count => 5000,  # Maximum alternatives after joining lines with |.
+    # Maximum number of body bytes exposed to administrator-supplied bad_body,
+    # bad_url and bad_url_central regular expressions.  The scan starts at the
+    # beginning of the body because spam signatures and URLs normally appear
+    # there.  Limiting the window prevents an expensive local regex from being
+    # run over every byte of a multi-megabyte binary article.
+    #
+    # 0      = scan the complete body (not recommended on large binary feeds)
+    # 65536  = recommended default: scan the first 64 KiB
+    # 262144 = deeper inspection at a higher CPU cost
+    # Maximum number of NORMALIZED body bytes exposed to administrator
+    # bad_body, bad_url and bad_url_central regular expressions.  Cleanfeed-ng
+    # lowercases this window and decodes top-level text/* Base64 first, matching
+    # the historical Cleanfeed behavior.  This means existing lowercase rules
+    # still catch uppercase/mixed-case text and can inspect URLs or keywords in
+    # Base64-encoded text articles.  The decoder reads only enough encoded data
+    # to produce this bounded prefix.  Set 0 only when a full-body scan is truly
+    # required; on binary feeds that can be significantly more expensive.
+    external_regex_body_bytes => 65536,
+    external_regex_reject_unsafe => 1, # Reject executable/nested pathological constructs; keep enabled.
+
+    # Maximum physical line length. 0 disables a limit. Start with audit mode.
+    max_header_line_bytes => 16384,  # Recommended 8192..65536.
+    max_body_line_bytes => 1048576,  # Recommended 262144..4194304; binary feeds may need more.
+    long_line_mode => 'audit',       # off, audit, reject.
+
+    # Lightweight MIME/yEnc consistency checks; this is deliberately not a full MIME parser.
+    malformed_encoding_check => 1,
+    malformed_encoding_mode => 'audit', # off, audit, reject.
+    yenc_size_tolerance_percent => 15, # 0..100. Used only for comparable single-part sizes or multipart =ypart range / =yend part size; never compares total file size with one part.
+
+    # Detect opaque raw bytes lacking normal yEnc/MIME/uuencode markers.
+    binary_byte_profile_enabled => 1,
+    binary_nonprintable_ratio_percent => 10, # Reject/audit above this percentage; valid range 0..100.
+    # Minimum non-empty sample size before byte-profile classification.
+    # Setting this to 0 permits tiny non-empty bodies to be inspected; it does
+    # not disable the detector.  Use binary_byte_profile_enabled => 0 or scope
+    # 'off' to disable it without performing any scan.
+    binary_ratio_min_bytes => 4096,      # Do not profile shorter bodies.
+    binary_ratio_scan_bytes => 65536,    # Maximum prefix examined.
+    binary_byte_profile_mode => 'audit', # off, audit, reject.
+
+    # Decide where the byte-profile detector is allowed to run.
+    #
+    # 'policy'   Recommended.  Evaluate only when the final merged global,
+    #            peer, and hierarchy policy says allow_binary => 0.  A binary
+    #            article in alt.binaries.* therefore causes no audit/reject
+    #            merely because its payload is correctly binary.
+    #
+    # 'text-only' Evaluate when the legacy Cleanfeed group classifier does not
+    #             classify every destination as binary-enabled.  This catches
+    #             mixed crossposts from a binary group into a text group.
+    #
+    # 'all'       Diagnostic mode.  Profile every sufficiently large article.
+    #             This is noisy on binary feeds and MUST NOT normally be paired
+    #             with binary_byte_profile_mode => 'reject'.
+    #
+    # 'off'       Skip the detector entirely, including the bounded body scan.
+    binary_byte_profile_scope => 'policy',
+
+    # Path sanity limits. INN already performs core Path handling; these are supplemental checks.
+    path_sanity_enabled => 1,
+    path_max_hops => 100,             # 0 is not useful; typical feeds are far below this value.
+    path_max_token_bytes => 255,
+    path_repeat_ceiling => 3,
+    path_sanity_mode => 'audit',      # off, audit, reject.
+
+    # Very small bounded rate anomaly detector. It is not a traffic shaper.
+    anomaly_rate_enabled => 1,
+    anomaly_window => 60,             # Window seconds; recommended 10..3600.
+    anomaly_peer_articles => 10000,   # Per-peer articles/window; 0 effectively disables peer alerting.
+    anomaly_host_articles => 1000,    # Per posting host articles/window.
+    anomaly_mode => 'audit',          # off, audit, reject; audit is strongly recommended.
+    anomaly_max_keys => 1000,         # Memory bound for rate tables.
+
+    # Bounded top-reject summaries written into the status snapshot.
+    top_offenders_enabled => 1,
+    top_offenders_limit => 10,        # Number shown for each category.
+    top_offenders_max_keys => 1000,   # Memory bound per category.
+
+    # SHA-256 fingerprint of cleanfeed.local plus all external list files.
+    config_fingerprint_enabled => 1,
+
+    # Normalize internationalized domains only when Net::IDN::Encode is installed.
+    # No module is required and processing continues normally when it is absent.
+    idn_normalization => 1,
+
+    # Granular trusted-list bypass. Trusted files never imply an unconditional bypass.
+    trusted_bypass_scoring => 1,     # Bypass scoring and EMP checks for trusted matches.
+    trusted_bypass_content => 0,     # Bypass From/Subject/Body/URL/malformed checks.
+    trusted_bypass_binary => 0,      # Bypass binary policy checks; normally keep 0.
+    trusted_bypass_crosspost => 0,   # Bypass crosspost checks; normally keep 0.
+    trusted_bypass_size => 0,        # Bypass article-size policy; normally keep 0.
+
+    low_xpost_maxgroups => 6,   # max xposts in low_xpost_groups
+    meow_ext_maxgroups => 2,    # max xposts from meow_groups to other groups
+    off_topic1_maxgroups => 2,  # How many off topic groups allowed in a distro
+    on_topic1_maxgroups => 5,   # How many on-topic groups allowed in a distro
+    on_topic1_mingroups => 2,   # How many on-topic groups req'd to trigger
+                                # off-topic filter
+    off_topic2_maxgroups => 2,
+    on_topic2_maxgroups => 5,
+    on_topic2_mingroups => 2,
+
+    binaries_in_mod_groups => 0,    # allow binaries in moderated groups?
+    max_base64_lines => 150,    # Allow x bare Base64 lines in non-bin grps
+    binary_scan_bytes => 262144,# Scan this many bytes from article start
+    binary_scan_tail_bytes => 16384, # Also scan tail (yEnc terminators)
+    detect_mime_binaries => 1,  # Detect MIME binary attachments, even if short
+    detect_malformed_yenc => 1, # Catch common non-compliant yEnc variants
+    nobase64 => 0,              # Internal override: 1 disables Base64 decoding; normally leave 0 (auto-set if MIME::Base64 is unavailable)
+
+    block_mime_html => 1,       # block MIME encapsulated HTML
+    block_html_multipart => 1,  # block all multipart with html sections
+    block_html => 1,            # block native HTML (Content-Type text/html)
+    block_html_images => 1,     # block <img src> in non text/plain messages
+
+    active_file => '',  # active file to determine which groups are moderated
+
+    # Logging and pid_file don't work for INN (uses news.notice)
+    log_directory => '',
+    log_name => '',
+    log_accepts => 0,               # include accepted articles in the log?
+    max_log_size => 0,
+    rotate_file => '',              # rotate log if this file exists
+    keep_old_logs => 7,             # how many old logfiles to keep
+
+    pid_file => '',
+
+    # Legacy status/statistics output
+    statfile => '',
+    html_statfile => '',
+    inn_syslog_status => 0,         # status to syslog (late-model INN only)
+
+    timer_info => 1,                # timing information (arts/second) in status report?
+    body_preview_bytes => 16384,     # decoded/lowercase preview used by legacy rules
+    study_max_lines => 250,          # Perl study() only below this line count; 0 disables
+    validate_config => 1,            # validate numeric values and regular expressions
+
+    # Peer and hierarchy policy engine -------------------------------------
+    policy_enabled => 1,             # 0 disables all Peer/Hierarchy policies; 1 enables them
+    policy_mode => 'audit',          # off|audit|quarantine|reject; global fallback mode
+    policy_default_max_bytes => 0,   # 0=unlimited; otherwise maximum full body bytes (0..2^31 recommended)
+    policy_default_allow_binary => 1,# 1=permit, 0=flag detected binary payloads
+    policy_log_matches => 1,         # log policy/rejection matches to INN syslog/news.notice
+    policy_log_accepts => 0,         # log every accepted article; normally keep 0 on transit servers
+    policy_include_message_id => 1,  # include sanitized Message-ID in structured event logs
+    policy_include_peer => 1,        # include inferred immediate peer/injection host
+    policy_include_groups => 1,      # include sanitized Newsgroups list
+    policy_max_peer_counters => 500, # maximum distinct peer counter keys retained in memory (0..100000)
+    policy_max_hierarchy_counters => 500, # maximum hierarchy roots retained (0..100000)
+
+    # Lightweight metrics --------------------------------------------------
+    metrics_enabled => 1,            # master switch for counters and output files
+    metrics_status_file => '/var/lib/news/cleanfeed/cleanfeed.status', # atomic key=value snapshot; '' disables
+    metrics_csv_file => '/var/log/news/cleanfeed-statistics.csv', # append-only cumulative CSV; '' disables
+    metrics_csv_interval => 300,     # seconds between CSV rows; recommended 60..86400
+    metrics_syslog => 0,             # emit a periodic compact metrics line via INN syslog
+    metrics_by_rule => 1,            # retain per-rule counters
+    metrics_by_peer => 1,            # retain bounded per-peer counters
+    metrics_by_hierarchy => 1,       # retain bounded first-component hierarchy counters
+
+    debug_batch_directory => '',    # directory for debugging batches
+    debug_batch_size => 0,          # max size of batch files before rotation
+
+    ### binaries allowed if groups match
+    bin_allowed => '^bin[a.]|\.bin[aei.]|\.bin$|^fur\.artwork'.
+        '|^alt\.anonymous\.messages$|^de\.alt\.dateien|^rec\.games\.bolo$'.
+        '|^comp\.security\.pgp\.test$|^sfnet\.tiedostot'.
+        '|^fido\.|^unidata\.|alt\.security\.keydist'.
+        '|^linux\.debian\.bugs\.dist$|^lucky\.freebsd',
+
+    # Groups matching this regex will accept binary UUenc and yEnc files
+    # where filename extensions match 'image_extensions'.
+    image_allowed => '\.pictures',
+
+    # Extensions on image files that are allowed in 'image_allowed' groups.
+    # These are not case sensitive.
+    image_extensions => 'jpe?g|png|gif|icon?',
+
+    ### no binaries allowed even if bin_allowed matches
+    bad_bin => '\.d$|^alt\.chello',
+
+    ### md5 EMP check not done if groups match
+    md5exclude => '^perl\.cpan\.testers',
+
+    ### reject all articles crossposted to groups matching this
+    poison_groups => '^alt\.(?:binaires|bainaries)|sexzilla|^newsmon$'.
+        '|h[i\d]pcl[o\d]ne|h\.i\.p\.c\.r\.i\.m\.e'.
+        '|(?<!free\.)h[i\d]pcr[i\d]m[e\d]',
+
+    ### no checks done if groups match
+    allexclude => '^mailing\.|^linux\.',
+
+    ### Exclude matching Newsgroups from the scoring filters
+    score_exclude => 'alt\.anonymous\.messages',
+
+    ### MIME HTML allowed here (if block_mime_html is True)
+    mime_html_allowed => '^pgsql\.|^relcom\.|^gmane\.',
+
+    ### HTML allowed here (if block_html is True)
+    html_allowed => "^relcom\.|^microsoft\.",
+
+    test_groups => '\.test(ing)?(?:$|\.)|^es\.pruebas|^borland\.public\.test2'.
+        '|^cern\.testnews',
+
+    ### groups where we restrict crossposts even more than normal
+    low_xpost_groups => 'test|jobs|forsale',
+
+    ### Groups where we restrict crossposts with other groups as a result of
+    ### the meow wars.  (<4curm4$r1@decaxp.harvard.edu>)
+    meow_groups => '^alt\.fan\.karl-malden\.nose|^alt\.flame|^alt\.troll'.
+        '|^alt\.alien\.vampire\.flonk\.flonk\.flonk|^alt\.romath'.
+        '|^alt\.snuh|^alt\.fan\.natasha',
+
+    ### Topic groups allow administrators to limit crossposting from defined
+    ### groups to undefined groups.  The allowed number of groups is defined
+    ### in off_topic_maxgroups.
+    ### Examples: '\.politi[ck]', '\.pets', '\.sex'
+    topic1_groups => '',
+    topic2_groups => '',
+
+    ### cancel in these groups are not honored
+    no_cancel_groups => '^alt\.religion\.scientology|^news\.admin\.net-abuse|^alt\.config$',
+
+    ### domains starting/ending in "xxx" are never good news
+    ### (checked against .com, .net, and .nu tld's only)
+# Disabled by default because broad domain-name heuristics are prone to false positives.
+#   baddomainpat => '[\w\-]+xxx|xxx[\w\-]+',
+
+    ### Exclude these Newsgroups from the From / Subject / Lines filter
+    fsl_exclude => 'comp\.lang\.ruby',
+
+    ### Exclude these Newsgroups from the Posting-Host / Lines filter
+    phl_exclude => 'comp\.lang\.ruby|^microsoft\.|^alt\.bestjobsusa'.
+        '|\.bbs\.|^relcom\.hot-news|^szn\.news\.',
+
+    ### Exclude these Newsgroups from the Posting-Host / Newsgroup filter
+    phn_exclude => '^local\.|^alt\.anonymous\.messages'.
+        '|^\w+\.bin|^microsoft\.|\.bbs\.|^alt\.bestjobsusa|^mozilla\.'.
+        '|^gnus?\.|^alt\.pictures\.|^gmane\.|^fa\.|^stu\.|^corel\.|\.cvs\.'.
+        '|\.talk|^lists\.|^microsoft\.|news\.lists\.filters|^perl\.'.
+        '|\.marketplace|\.ebay|\.forsale|^relcom\.hot-news|^szn\.news\.'.
+        '|^comp\.lang\.python',
+
+    # These hosts create unlinkable Posting-Host headers, rendering them
+    # useless for hashing purposes.  In these instances the NPH and PHR filter
+    # will use the Path header instead, (if phn_aggressive is true).  The PHL
+    # filter will ignore posts from these hosts.
+    bad_nph_hosts => 'newsguy\.com|tornevall\.net',
+    
+    ### Exempt these hosts from the Posting-Host / Lines filter
+    phl_exempt => '^localhost$|webtv\.net$|^newscene\.newscene\.com$'.
+        '|^freebsd\.csie\.nctu\.edu\.tw$|^ddt\.demos\.su$|^onlyNews customer$'.
+        '|localhost\.pld-linux\.org',
+
+    ### Exempt these hosts from the Posting-Host / Newsgroup filter
+    phn_exempt => '^localhost$|^127\.0\.0\.1$|localhost\.pld-linux\.org',
+
+    ### Exempt these hosts from the High-Risk Newsgroups filter
+    phr_exempt => '^localhost$|^127\.0\.0\.1$',
+
+    ### Exclude these groups from the ratio based scoring filters. (Only used
+    ### if do_ratio_scoring is true).
+    ratio_exclude => '^cn\.|^tw\.|^japan\.|^fj\.|\.china',
+
+    ### Newsgroups that get frequently flooded.  This defines the groups
+    ### processed by the PHR filter.  It should be entirely user-defined.
+    flood_groups => '',
+
+    ### posting hosts exempt from excessive supersedes filter
+    supersedes_exempt => '^localhost$|^penguin-lust\.mit\.edu$',
+
+    ### refuse articles with these in the message-id (INN only)
+    refuse_messageids => 'HeadHunter\.NET>|none\d+\.yet>',
+
+    ### groups expected to contain bodies and/or subject lines from spam
+    spam_report_groups => '^(?:news|de)\.admin\.net-abuse'.
+        '|news\.lists\.filters|\.nocem|\.spamtrap$|\.spam\.sightings'.
+        '|^fr\.usenet\.abus\.rapports|^nl\.internet\.misbruik\.rapport$',
+
+    adult_groups => 'personals|sex|nud[ei]|erot|xxx|lolita'.
+    '|neojapan|bondage|fetish|lesbian|porn|tasteless|voyeur|^it\.sesso'.
+    '|^alt\.(?:mag[\.a]|redh|stories'.
+     '|fan\.(?:air|asp|pret|televisionx|pst|snuf))'.
+    '|^alt\.binaries\.(?:aimee|adole|ass\b|great|images\.(?:sun|under)|full'.
+     '|linger|pent|pin-?up|nospam|scanm|pictures\.(?:aspa|bc|blon|blueb|bru'.
+      '|centerf|coc|girlfr|horny|hussy|strip)|multimedia\.(?:boy|natur))',
+
+    not_adult_groups => 'sexual\.abuse|^soc.sex|^fr\.soc\.homosexualite'.
+        '|^alt\.(?:support|teens|answers)',
+
+    faq_groups => '\.faqs?$|\.answers$|^news\.announce\.newgroups$'.
+        '|^news\.admin\.hierarchies$',
+
+    local_approved_groups => 'alt\.|news\.admin\.net-abuse\.'.
+    '|fr\.misc\.bavardages\.dinosaures|alt\.sysadmin\.recovery'.
+    '|alt\.tech-support\.recovery|alt\.dev\.null'
+
+    );
+
+    # Optional regex additions. Each value is appended with "|" to the
+    # corresponding built-in expression. Leave this hash empty when unused.
+    %config_append = (
+        # bin_allowed => '^example\.binaries\.',
+        # allexclude  => '^local\.trusted\.',
+    );
+
+    # Optional restricted-hierarchy definitions. An article crossposted from
+    # a matching hierarchy to outside groups is rejected by the existing rule.
+    # $Restricted_Groups{example} = '^example\.';
+
+    # Peer policy keys are Perl regexes matched against the inferred injection
+    # host/immediate Path host. Longer matching regexes are applied last.
+    %Peer_Policies = (
+        # '^trusted\.peer\.example$' => {
+        #     mode => 'off',            # off|audit|quarantine|reject
+        #     max_bytes => 0,           # 0=unlimited
+        #     allow_binary => 1,        # 0=flag binary payload, 1=allow
+        # },
+        # '^text-only\.peer\.example$' => {
+        #     mode => 'reject',
+        #     max_bytes => 1048576,
+        #     allow_binary => 0,
+        # },
+    );
+
+    # Hierarchy policies are evaluated for every target newsgroup. Longer
+    # matching regexes override shorter/general matches. Use anchored regexes.
+    %Hierarchy_Policies = (
+        # '^it\.' => {
+        #     mode => 'audit',
+        #     max_bytes => 1048576,
+        #     allow_binary => 0,
+        # },
+        # '^alt\.binaries\.' => {
+        #     mode => 'off',
+        #     max_bytes => 0,
+        #     allow_binary => 1,
+        # },
+    );
+}
+
+1;

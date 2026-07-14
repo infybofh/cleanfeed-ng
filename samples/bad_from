@@ -1,0 +1,24 @@
+# bad_from
+# ========
+# One Perl regular expression per line, matched against sender identity fields.
+# The exact string may include a display name and angle-bracket address.
+# Matching is normally case-insensitive in Cleanfeed's processing path.
+#
+# Exact bare address:
+# ^abuse-campaign-2026@example\.invalid$
+#
+# Exact display name with optional whitespace before the address:
+# ^Campaign Bot\s*<bot@example\.invalid>$
+#
+# Either a bare address or the same address inside angle brackets:
+# (?:^|<)bot@example\.invalid(?:>|$)
+#
+# Generated local parts with exactly six decimal digits:
+# ^promo-[0-9]{6}@spam-domain\.example$
+#
+# A bounded family with an optional plus tag:
+# ^campaign(?:\+[A-Za-z0-9_-]{1,24})?@example\.invalid$
+#
+# Literal plus signs must be escaped (\+).  Dots in domains must also be
+# escaped (\.).  Never block gmail.com, outlook.com, a common surname, or a
+# generic display word: this list causes direct rejection.

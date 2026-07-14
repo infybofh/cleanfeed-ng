@@ -1,0 +1,26 @@
+# bad_body
+# ========
+# One Perl regular expression per line, matched against a bounded article-body
+# preview.  A hit is an unconditional rejection.  Use only unique, stable
+# campaign markers that cannot plausibly occur in discussion, quotations,
+# source code, spam reports, or FAQs.
+#
+# Exact campaign sentence, allowing variable whitespace:
+# ^limited\s+time\s+offer\s+campaign-id-12345$
+#
+# Unique machine marker appearing anywhere in the scanned body:
+# payload-id:\s*deadbeefcafebabe
+#
+# Exact contact phrase with flexible spacing:
+# contact\s+abuse-campaign-2026@example\.invalid
+#
+# One of two unique tokens surrounded by non-word boundaries:
+# (?:^|\W)(?:DROP-ID-4711|DROP-ID-8155)(?:\W|$)
+#
+# A fixed JSON-like key/value emitted by a specific bot.  Braces are escaped to
+# make the intention obvious even though not every brace is special here:
+# \{"campaign":"example-2026-07","id":[0-9]{8}\}
+#
+# Do NOT add "bitcoin", "casino", "viagra", generic URLs, =ybegin, MIME
+# boundaries, Base64-looking text, or programming-language fragments.  Those
+# cause severe false positives in technical and abuse-reporting groups.

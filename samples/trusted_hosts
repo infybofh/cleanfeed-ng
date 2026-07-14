@@ -1,0 +1,15 @@
+# trusted_hosts
+# =============
+# One regex per line for posting/injection hosts that may receive selected
+# bypasses.  Trust narrowly and never assume this disables binary, size, or
+# crosspost checks unless the matching trusted_bypass_* option explicitly says
+# so.
+#
+# Exact host:
+# ^faq-poster\.example\.net$
+#
+# Numbered, administratively controlled posting cluster:
+# ^faq-poster[0-9]+\.example\.net$
+#
+# Two exact infrastructure addresses:
+# ^(?:192\.0\.2\.10|192\.0\.2\.11)$
