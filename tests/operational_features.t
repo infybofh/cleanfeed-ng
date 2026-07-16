@@ -2,7 +2,7 @@
 use strict; use warnings; use Test::More; use FindBin; use File::Temp qw(tempdir);
 BEGIN { $ENV{CLEANFEED_CONFIG_DIR}=''; package INN; sub syslog{1} sub newsgroup{''} sub addhist{1} sub cancel{1} sub filesfor{''} sub head{''} }
 package main;
-our (%hdr,%state,%config,@groups,%status,$now,$Start_Time,%timer,%Bad_File_Mtime,$Last_Bad_Mtime_Check,$Config_Fingerprint,%Peer_Policies,%Hierarchy_Policies,%gr);
+our (%hdr,%state,%config,@groups,%status,$now,$Start_Time,%timer,%Bad_File_Mtime,$Last_Bad_Mtime_Check,$Config_Fingerprint,%Peer_Policies,%Hierarchy_Policies,%gr,%Group_Class_Cache,$Group_Class_Cache_Size);
 do "$FindBin::Bin/../cleanfeed" or die "$@ $!";
 
 is(reject_code('binary.yenc'),'CF-BINARY-YENC','stable yEnc code');
@@ -123,5 +123,81 @@ like(external_regex_body(), qr/spam\.example/, 'external regex body decodes text
 like(external_regex_body(), qr/buy cialis/, 'decoded Base64 text is lowercased for bad_body compatibility');
 my $cached=external_regex_body();
 is($cached, $state{external_regex_body}, 'normalized external body is cached per article');
+
+
+# Compare the cached bitmask against the historical per-regex semantics for
+# representative group names before testing cache mechanics.
+sub historical_group_mask {
+    my ($group)=@_;
+    local $_=$group;
+    my $mask=0;
+    $mask |= GC_BINARY()    if $config{bin_allowed} and /$config{bin_allowed}/;
+    $mask |= GC_IMAGE()     if $config{image_allowed} and /$config{image_allowed}/;
+    $mask |= GC_BAD_BIN()   if $config{bad_bin} and /$config{bad_bin}/;
+    $mask |= GC_HTML()      if $config{html_allowed} and /$config{html_allowed}/;
+    $mask |= GC_MIME_HTML() if $config{mime_html_allowed} and /$config{mime_html_allowed}/;
+    $mask |= GC_POISON()    if $config{poison_groups} and /$config{poison_groups}/;
+    $mask |= GC_REPORTS()   if $config{spam_report_groups} and /$config{spam_report_groups}/;
+    $mask |= GC_NO_CANCEL() if $config{no_cancel_groups} and /$config{no_cancel_groups}/;
+    $mask |= GC_TEST()      if /$config{test_groups}/;
+    $mask |= GC_ADULT()     if /$config{adult_groups}/ and not /$config{not_adult_groups}/;
+    $mask |= GC_FAQ()       if /$config{faq_groups}/;
+    $mask |= GC_RATIO()     if /$config{ratio_exclude}/;
+    $mask |= GC_APPROVED()  if /$config{local_approved_groups}/;
+    $mask |= GC_SKIP()      if $config{allexclude} and /$config{allexclude}/;
+    $mask |= GC_FSLSKIP()   if $config{fsl_exclude} and /$config{fsl_exclude}/;
+    $mask |= GC_MD5SKIP()   if $config{md5exclude} and /$config{md5exclude}/;
+    $mask |= GC_PHNSKIP()   if $config{phn_exclude} and /$config{phn_exclude}/;
+    $mask |= GC_PHLSKIP()   if $config{phl_exclude} and /$config{phl_exclude}/;
+    $mask |= GC_SCORESKIP() if $config{score_exclude} and /$config{score_exclude}/;
+    $mask |= GC_PHRINC()    if $config{flood_groups} and /$config{flood_groups}/;
+    $mask |= GC_LOW_XPOST() if $config{low_xpost_groups} and /$config{low_xpost_groups}/;
+    $mask |= GC_MEOW()      if $config{meow_groups} and /$config{meow_groups}/;
+    $mask |= GC_TOPIC1()    if $config{topic1_groups} and /$config{topic1_groups}/;
+    $mask |= GC_TOPIC2()    if $config{topic2_groups} and /$config{topic2_groups}/;
+    $mask |= GC_LOCALHIER() if /^local\./;
+    return $mask;
+}
+for my $group (qw(
+    alt.binaries.test
+    news.admin.net-abuse.test
+    soc.sexual.abuse
+    fr.misc.bavardages.dinosaures
+    local.example
+    misc.jobs
+    alt.fan.karl-malden.nose
+)) {
+    is(classify_group_uncached($group),historical_group_mask($group),
+       "cached mask preserves historical classification for $group");
+}
+
+# The group cache stores only deterministic regex classifications. Repeated
+# groups must hit the cache without growing it; disabling and bounds must remain
+# predictable and light.
+$config{group_class_cache_enabled}=1;
+$config{group_class_cache_entries}=2;
+clear_group_class_cache();
+my $group_mask=group_classification('alt.binaries.test');
+ok($group_mask & GC_BINARY(), 'binary-group classification bit is set');
+ok($group_mask & GC_TEST(), 'test-group classification bit is set');
+is($Group_Class_Cache_Size,1,'first group classification populates one cache entry');
+is(group_classification('alt.binaries.test'),$group_mask,'repeated group returns identical cached mask');
+is($Group_Class_Cache_Size,1,'cache hit does not grow the cache');
+group_classification('news.admin.net-abuse.test');
+is($Group_Class_Cache_Size,2,'second distinct group reaches configured cache bound');
+group_classification('local.example');
+is($Group_Class_Cache_Size,1,'next miss clears the bounded cache before insertion');
+ok(!exists $Group_Class_Cache{'alt.binaries.test'},'full-clear policy removes the previous generation');
+ok(group_classification('local.example') & GC_LOCALHIER(),'local hierarchy bit survives cached classification');
+clear_group_class_cache();
+$config{group_class_cache_enabled}=0;
+group_primary_classification('alt.binaries.test');
+group_followup_classification('alt.binaries.test');
+is($Group_Class_Cache_Size,0,'disabled group cache stores no entries');
+$config{group_class_cache_enabled}=1;
+$config{group_class_cache_entries}=8192;
+clear_group_class_cache();
+group_classification('x' x 256);
+is($Group_Class_Cache_Size,0,'oversized group name is classified but not cached');
 
 done_testing();

@@ -164,3 +164,25 @@ security semantics: the bounded window is decoded when appropriate, converted
 to lowercase, cached per article, and `Bad_Body_RE` is explicitly compiled with
 `/i`.  Regression tests cover mixed-case spam terms and Base64-encoded text
 URLs so this behavior cannot silently regress again.
+
+
+## 2026.07.3-rc2: bounded newsgroup classification cache
+
+RC2 removes the obsolete `study()` call from the article hot path. The legacy
+`study_max_lines` key remains temporarily accepted and ignored so existing site
+configurations can be cleaned up without affecting service; both the runtime
+loader and the standalone checker report its deprecation when explicitly used.
+
+The historical group-classification loops repeatedly evaluate the same site
+regexes for popular newsgroups. RC2 adds a bounded cache containing one integer
+bitmask per recently seen group. The cache deliberately excludes moderation
+state, `Restricted_Groups`, article decisions, reason codes, audit events and
+all body/header findings. It performs no per-hit logging or LRU/timestamp
+maintenance. At the configured entry limit it clears the cache and repopulates
+naturally from subsequent traffic. Group names longer than 255 bytes are always
+classified normally but are never retained.
+
+When the cache is disabled, the two historical classification phases remain
+separate, so opting out does not double the number of regex evaluations. Tests
+cover cache hits, disablement, entry bounds, overflow clearing, oversized keys
+and representative classification equivalence.

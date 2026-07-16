@@ -24,6 +24,9 @@ my $local = File::Spec->catfile($config_dir,'cleanfeed.local');
 if (-f $local) {
   my $txt = slurp($local); $summary{'cleanfeed.local'} = line_count($txt);
   push @errors, "cleanfeed.local contains executable regex code" if $txt =~ /\(\?\??\{/;
+  (my $active = $txt) =~ s/#.*$//mg;
+  push @warnings, 'study_max_lines is deprecated and ignored; remove it from cleanfeed.local'
+      if $active =~ /\bstudy_max_lines\s*=>/;
   my $ok = system($^X,'-c',$local); push @errors, 'cleanfeed.local failed perl -c' if $ok != 0;
 } else { push @warnings, "cleanfeed.local not found at $local"; }
 

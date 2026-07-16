@@ -2,7 +2,7 @@
 use strict; use warnings; use Test::More; use FindBin;
 my $root="$FindBin::Bin/..";
 open my $vf,'<',"$root/VERSION" or die $!; chomp(my $version=<$vf>); close $vf;
-like($version,qr/^\d{4}-\d{2}-\d{2}$/,'version uses YYYY-MM-VV');
+like($version,qr/^\d{4}\.\d{2}\.\d+(?:-(?:al|be|rc)\d+)?$/,'version uses YYYY.MM.VV with an optional development suffix');
 open my $cf,'<',"$root/cleanfeed" or die $!; local $/; my $src=<$cf>; close $cf;
 like($src,qr/\$cleanfeed_ng_version\s*=\s*'\Q$version\E'/,'runtime version matches VERSION');
 unlike($src,qr/'(?:malformed\.encoding|structure\.path|anomaly\.rate|structure\.long_line)'/,'obsolete generic new-check rules are not emitted');

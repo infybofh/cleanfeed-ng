@@ -6,7 +6,7 @@
   </a>
 
 ![Release](https://img.shields.io/github/v/release/infybofh/cleanfeed-ng)
-![License](https://img.shields.io/github/license/infybofh/cleanfeed-ng)
+[![License: Artistic 1.0](https://img.shields.io/badge/License-Artistic%201.0-blue.svg)](LICENSE)
 ![Issues](https://img.shields.io/github/issues/infybofh/cleanfeed-ng)
 ![Perl](https://img.shields.io/badge/Perl-5.38+-blue)
 ![INN](https://img.shields.io/badge/INN-2.*-green)
@@ -16,11 +16,12 @@
 
 `cleanfeed-ng` is a maintained, lightweight continuation of the historical Cleanfeed filter for the Perl filtering interface of INN `innd`. It is designed for server-to-server Usenet transit filtering, with particular attention to predictable behaviour, low overhead, safe configuration changes, and useful diagnostics.
 
-> **Version:** `2026-07-03`  
-> **Status:** **Release candidate / beta**  
+> **Stable packaged release:** `2026.07.3-rc1` — available as a ZIP from [GitHub Releases](https://github.com/infybofh/cleanfeed-ng/releases).  
+> **Development tree:** `2026.07.3-rc2` — testing only, available from the `main` branch and not published as a release ZIP.  
 > **Runtime:** Perl 5.38 or newer; Ubuntu 24.04 LTS is the minimum supported platform baseline.
 
-This release is intended for real-world testing in `audit` mode before wider production use. Please report false positives, regressions, performance issues, and unusual log events.
+> [!WARNING]
+> The `main` branch currently contains **2026.07.3-rc2**. It is under active testing and should be used at your own risk. Administrators who want the current stable, packaged baseline should use **2026.07.3-rc1** from the Releases page.
 
 ## Project goals
 
@@ -43,11 +44,24 @@ This release is intended for real-world testing in `audit` mode before wider pro
 - Standalone configuration and article-inspection tooling.
 - Comment-only `bad_*` and `trusted_*` examples that are safe to copy before customization.
 
-## Release focus
+## RC2 development focus
 
-This release concentrates on hot-path efficiency and operational safety: bounded and cached scans, constant-memory long-line checks, a modern Perl baseline, an expanded HTML statistics page, parameterized SQLite queries in the offline URL tool, IPv6 literal URL recognition, and standalone audit-analysis and benchmark tools.
+The `2026.07.3-rc2` development tree keeps the RC1 filtering behaviour while making two deliberately small hot-path changes:
 
-External body rules preserve historical Cleanfeed semantics: `bad_body`, `bad_url`, and `bad_url_central` inspect a bounded, cached, lowercased text window, and top-level `text/*` Base64 content is decoded before matching.
+- the obsolete Perl `study()` call has been removed; the old `study_max_lines` setting is temporarily accepted, ignored, and reported as deprecated;
+- deterministic regex classification of frequently repeated newsgroup names uses a lightweight bounded cache, with no LRU bookkeeping, per-hit logging, article-decision caching, or moderation-state caching. Group names longer than 255 bytes are classified normally but are not retained.
+
+External body rules continue to preserve historical Cleanfeed semantics: `bad_body`, `bad_url`, and `bad_url_central` inspect a bounded, cached, lowercased text window, and top-level `text/*` Base64 content is decoded before matching.
+
+## Versioning
+
+cleanfeed-ng versions use:
+
+```text
+YYYY.MM.VV[-alN|-beN|-rcN]
+```
+
+`YYYY` is the year, `MM` the month, and `VV` the sequential project version within that month. Optional suffixes identify alpha (`-alN`), beta (`-beN`), and release-candidate (`-rcN`) builds. The RC1 package was originally published under the older label `2026-07-03 RC1`; its canonical name under this scheme is `2026.07.3-rc1`.
 
 ## Start here
 
@@ -88,7 +102,9 @@ No content detector can identify every deliberately encrypted or arbitrarily obf
 
 ## Project history and credit
 
-`cleanfeed-ng` is derived from the historical Cleanfeed project. Credit and copyright notices from the original code are retained. The goal is not to erase or replace that work, but to keep a proven INN transit filter maintained, testable, understandable, and useful on current systems.
+Cleanfeed was originally developed by **Jeremy Nixon**, who maintained it until 1998. Further development was then taken on by **Marco d'Itri**, followed by later updates and maintenance by **Steve Crook**. Their original credit and copyright notices are retained in the source.
+
+`cleanfeed-ng` continues that historical work. The goal is not to erase or replace it, but to keep a proven INN transit filter maintained, testable, understandable, and useful on current systems.
 
 ## Contributing
 

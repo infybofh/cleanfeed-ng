@@ -39,6 +39,7 @@ for my $name (qw(
     block_html block_html_images do_mid_filter do_supersedes_filter
     binary_scan_bytes binary_scan_tail_bytes detect_mime_binaries
     detect_malformed_yenc body_preview_bytes validate_config
+    group_class_cache_enabled group_class_cache_entries study_max_lines
 )) {
     ok($defined{$name}, "parameter $name is represented in defaults");
 }

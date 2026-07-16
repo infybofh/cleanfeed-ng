@@ -291,8 +291,22 @@ sub local_config {
 
     timer_info => 1,                # timing information (arts/second) in status report?
     body_preview_bytes => 16384,     # decoded/lowercase preview used by legacy rules
-    study_max_lines => 250,          # Perl study() only below this line count; 0 disables
+
+    # DEPRECATED: study() has been a no-op for years on supported Perl releases.
+    # This key is temporarily accepted and ignored so existing configurations
+    # can be upgraded cleanly. Remove it from local configurations when practical.
+    study_max_lines => 0,
+
     validate_config => 1,            # validate numeric values and regular expressions
+
+    # Lightweight group-classification cache -------------------------------
+    # The cache stores only deterministic regex results for recently seen
+    # newsgroup names. It never caches article decisions, moderation state,
+    # reason codes or audit events. A simple full clear at the configured limit
+    # avoids LRU bookkeeping in the synchronous article path. Group names longer
+    # than 255 bytes are classified normally but are not cached.
+    group_class_cache_enabled => 1,  # 0 disables; 1 enables the bounded cache
+    group_class_cache_entries => 8192,# 0 disables; allowed range 0..65536
 
     # Peer and hierarchy policy engine -------------------------------------
     policy_enabled => 1,             # 0 disables all Peer/Hierarchy policies; 1 enables them

@@ -29,6 +29,12 @@ like($source, qr/binary_byte_profile_scope\s*=>\s*['"]policy['"]/,
     'safe policy scope is the built-in byte-profile default');
 like($source, qr/sub\s+binary_byte_profile_in_scope\s*\{/,
     'byte-profile scope decision has a dedicated documented helper');
+unlike($source, qr/study\s+\$hdr\{__BODY__\}/,
+    'obsolete study() call is absent from the article hot path');
+like($source, qr/sub\s+group_classification\s*\{/,
+    'bounded newsgroup classification cache helper exists');
+like($source, qr/Group_Class_Cache_Size\s*>?=\s*\$config\{group_class_cache_entries\}/,
+    'group classification cache has an explicit entry bound');
 
 # Generic fallback remains available for third-party local hooks, but all rule
 # families known to the maintained tree must have explicit stable mappings.

@@ -1,10 +1,50 @@
 cleanfeed-ng
 ============
 
-Current release: 2026-07-03
+Stable packaged release: 2026.07.3-rc1 (available from GitHub Releases)
+Current Git development tree: 2026.07.3-rc2 (testing only; no release ZIP)
 Minimum Perl: 5.38 (Ubuntu 24.04 LTS baseline)
 
-cleanfeed-ng is a maintained continuation of Cleanfeed for INN transit filtering. Releases use YYYY-MM-VV: year, month, and sequential release number within that month.
+cleanfeed-ng is a maintained continuation of Cleanfeed for INN transit filtering.
+The main branch currently contains RC2 development code and must be used at the
+administrator's own risk. Operators who want the stable packaged baseline should
+use the 2026.07.3-rc1 ZIP from the GitHub Releases page.
+
+Versions use YYYY.MM.VV, where VV is the sequential project version within the
+month. Optional suffixes are -alN for alpha, -beN for beta and -rcN for release
+candidates. The package originally announced as 2026-07-03 RC1 is canonically
+named 2026.07.3-rc1 under the new scheme.
+
+
+RC2 HOT-PATH CHANGES
+--------------------
+The 2026.07.3-rc2 development tree removes the obsolete Perl study() call. The
+legacy study_max_lines setting is temporarily accepted and ignored; when it is
+present, cleanfeed-ng emits one deprecation notice at configuration load, and
+cleanfeed-admin.pl reports it during --check-config.
+
+RC2 also introduces a lightweight bounded cache for deterministic per-newsgroup
+regex classification. The cache stores one integer bitmask per recently seen
+group. It does not cache moderation state, article decisions, reason codes,
+audit events or body/header findings. It performs no per-hit logging and uses a
+simple full clear when the configured entry limit is reached, avoiding LRU or
+timestamp bookkeeping in the synchronous INN article path. Group names longer
+than 255 bytes are classified normally but are not retained.
+
+Default settings:
+
+  group_class_cache_enabled => 1
+  group_class_cache_entries => 8192
+
+Set either value to 0 to disable the cache. The maximum accepted entry limit is
+65536. The cache is reset whenever configuration is loaded.
+
+PROJECT HISTORY AND CREDIT
+--------------------------
+Cleanfeed was originally developed by Jeremy Nixon, with further development by
+Marco d'Itri and later updates and maintenance by Steve Crook. cleanfeed-ng
+retains the historical copyright notices and continues that work for current
+INN systems.
 
 GITHUB REPOSITORY LAYOUT
 ------------------------

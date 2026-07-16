@@ -41,10 +41,49 @@ $MODE ||= 'inn';
 # IF YOU WANT TO CHANGE SOMETHING, PLEASE USE cleanfeed.local
 ##############################################################################
 
-# cleanfeed-ng release version (YYYY-MM-VV).
-$cleanfeed_ng_version = '2026-07-03';
+# cleanfeed-ng release version (YYYY.MM.VV with an optional -alN, -beN or
+# -rcN development suffix).
+$cleanfeed_ng_version = '2026.07.3-rc2';
 # Backward-compatible internal alias used by metrics and fingerprints.
 $cleanfeed_maintenance_version = $cleanfeed_ng_version;
+
+
+# Fixed group-classification flags.  A single integer is cached for each
+# recently seen newsgroup, avoiding repeated execution of the same site regexes
+# on the groups that carry most traffic.  Moderation state and Restricted_Groups
+# remain outside this cache because they have separate semantics.
+use constant {
+    GC_BINARY    => 1 << 0,
+    GC_IMAGE     => 1 << 1,
+    GC_BAD_BIN   => 1 << 2,
+    GC_HTML      => 1 << 3,
+    GC_MIME_HTML => 1 << 4,
+    GC_POISON    => 1 << 5,
+    GC_REPORTS   => 1 << 6,
+    GC_NO_CANCEL => 1 << 7,
+    GC_TEST      => 1 << 8,
+    GC_ADULT     => 1 << 9,
+    GC_FAQ       => 1 << 10,
+    GC_RATIO     => 1 << 11,
+    GC_APPROVED  => 1 << 12,
+    GC_SKIP      => 1 << 13,
+    GC_FSLSKIP   => 1 << 14,
+    GC_MD5SKIP   => 1 << 15,
+    GC_PHNSKIP   => 1 << 16,
+    GC_PHLSKIP   => 1 << 17,
+    GC_SCORESKIP => 1 << 18,
+    GC_PHRINC    => 1 << 19,
+    GC_LOW_XPOST => 1 << 20,
+    GC_MEOW      => 1 << 21,
+    GC_TOPIC1    => 1 << 22,
+    GC_TOPIC2    => 1 << 23,
+    GC_LOCALHIER => 1 << 24,
+    GROUP_CACHE_MAX_NAME_BYTES => 255,
+};
+
+%Group_Class_Cache = ();
+$Group_Class_Cache_Size = 0;
+$Study_Max_Lines_Configured = 0;
 
 # default configuration
 sub get_config {
@@ -211,8 +250,14 @@ sub get_config {
 
     timer_info => 1,                # timing information (arts/second) in status report?
     body_preview_bytes => 16384,     # decoded/lowercase preview used by legacy rules
-    study_max_lines => 250,          # Perl study() only below this line count; 0 disables
+    study_max_lines => 0,            # DEPRECATED and ignored; retained temporarily for config compatibility
     validate_config => 1,            # validate numeric values and regular expressions
+
+    # Lightweight bounded cache for deterministic per-newsgroup regex results.
+    # A full cache clear at the configured limit is intentionally simpler and
+    # cheaper than maintaining an LRU list in the synchronous article path.
+    group_class_cache_enabled => 1,  # 0 disables; 1 caches repeated group classifications
+    group_class_cache_entries => 8192,# 0 disables; valid range 0..65536
 
     # Peer and hierarchy policy engine. The default is audit-only for safety.
     policy_enabled => 1,
@@ -393,6 +438,7 @@ sub get_config {
     # Load up the external config file
     my $local_file = "$config_dir/cleanfeed.local";
     $Local_Conf_Err = 0;
+    $Study_Max_Lines_Configured = 0;
     if ($config_dir and -e $local_file) {
         undef %config_local;
         undef %config_append;
@@ -405,6 +451,10 @@ sub get_config {
                 $Local_Conf_Err = 1;
             } else {
                 local_config() if defined &local_config;
+                $Study_Max_Lines_Configured = 1
+                    if exists $config_local{study_max_lines}
+                        or (defined $config{study_max_lines}
+                            and $config{study_max_lines} ne '0');
             }
         } else {
             slog('E', "Cannot open $local_file: $!");
@@ -440,6 +490,13 @@ sub get_config {
 
     validate_configuration() if $config{validate_config};
 
+    if ($Study_Max_Lines_Configured) {
+        slog('N', 'Deprecated option study_max_lines is ignored; study() is a '
+            . 'no-op on supported Perl versions and this option will be removed '
+            . 'in a future release');
+    }
+
+    clear_group_class_cache();
     @Restricted_List = keys %Restricted_Groups;
 
     # Create the logfile path. Will be undefined if logging is broken
@@ -618,7 +675,7 @@ sub validate_configuration {
         path_sanity_enabled anomaly_rate_enabled top_offenders_enabled
         config_fingerprint_enabled idn_normalization external_regex_reject_unsafe
         trusted_bypass_scoring trusted_bypass_content trusted_bypass_binary
-        trusted_bypass_crosspost trusted_bypass_size
+        trusted_bypass_crosspost trusted_bypass_size group_class_cache_enabled
     );
     for my $key (keys %boolean) {
         push @errors, "$key must be 0 or 1"
@@ -632,7 +689,7 @@ sub validate_configuration {
         off_topic2_maxgroups on_topic2_maxgroups on_topic2_mingroups
         max_base64_lines max_log_size keep_old_logs debug_batch_size
         fuzzy_max_length md5_max_length binary_scan_bytes binary_scan_tail_bytes
-        body_preview_bytes study_max_lines MD5RateCutoff MD5RateCeiling
+        body_preview_bytes MD5RateCutoff MD5RateCeiling
         MD5RateBaseInterval PHLRateCutoff PHLRateCeiling PHLRateBaseInterval
         PHNRateCutoff PHNRateCeiling PHNRateBaseInterval PHRRateCutoff
         PHRRateCeiling PHRRateBaseInterval FSLRateCutoff FSLRateCeiling
@@ -646,7 +703,7 @@ sub validate_configuration {
         binary_nonprintable_ratio_percent binary_ratio_min_bytes binary_ratio_scan_bytes
         path_max_hops path_max_token_bytes path_repeat_ceiling anomaly_window
         anomaly_peer_articles anomaly_host_articles anomaly_max_keys
-        top_offenders_limit top_offenders_max_keys
+        top_offenders_limit top_offenders_max_keys group_class_cache_entries
     );
     for my $key (keys %nonnegative) {
         push @errors, "$key must be a non-negative integer"
@@ -693,6 +750,9 @@ sub validate_configuration {
     }
     push @errors, 'binary_nonprintable_ratio_percent must be between 0 and 100'
         if $config{binary_nonprintable_ratio_percent} > 100;
+    push @errors, 'group_class_cache_entries must not exceed 65536'
+        if defined $config{group_class_cache_entries}
+            and $config{group_class_cache_entries} > 65536;
 
     push @errors, 'supersedes_mode must be off, audit, or reject'
         if defined $config{supersedes_mode}
@@ -818,6 +878,108 @@ sub setup_stuff {
     $timer{time} = time if $config{timer_info} and not $timer{time};
 }
 
+# Drop all cached group classifications.  This is called after configuration is
+# loaded and is also exposed for tests and future reload hooks.
+sub clear_group_class_cache {
+    %Group_Class_Cache = ();
+    $Group_Class_Cache_Size = 0;
+    return;
+}
+
+# Compute the historical Newsgroups-only regex properties.
+sub classify_group_primary_uncached {
+    my ($group) = @_;
+    local $_ = defined $group ? $group : '';
+    my $mask = 0;
+
+    $mask |= GC_BINARY    if $config{bin_allowed} and /$config{bin_allowed}/o;
+    $mask |= GC_IMAGE     if $config{image_allowed} and /$config{image_allowed}/o;
+    $mask |= GC_BAD_BIN   if $config{bad_bin} and /$config{bad_bin}/o;
+    $mask |= GC_HTML      if $config{html_allowed} and /$config{html_allowed}/o;
+    $mask |= GC_MIME_HTML if $config{mime_html_allowed} and /$config{mime_html_allowed}/o;
+    $mask |= GC_POISON    if $config{poison_groups} and /$config{poison_groups}/o;
+    $mask |= GC_REPORTS   if $config{spam_report_groups} and /$config{spam_report_groups}/o;
+    $mask |= GC_NO_CANCEL if $config{no_cancel_groups} and /$config{no_cancel_groups}/o;
+    $mask |= GC_TEST      if /$config{test_groups}/o;
+    $mask |= GC_ADULT     if /$config{adult_groups}/o and not /$config{not_adult_groups}/o;
+    $mask |= GC_FAQ       if /$config{faq_groups}/o;
+    $mask |= GC_RATIO     if /$config{ratio_exclude}/o;
+    $mask |= GC_APPROVED  if /$config{local_approved_groups}/o;
+    return $mask;
+}
+
+# Compute the historical Newsgroups+Followup-To regex properties.
+sub classify_group_followup_uncached {
+    my ($group) = @_;
+    local $_ = defined $group ? $group : '';
+    my $mask = 0;
+
+    $mask |= GC_SKIP      if $config{allexclude} and /$config{allexclude}/o;
+    $mask |= GC_FSLSKIP   if $config{fsl_exclude} and /$config{fsl_exclude}/o;
+    $mask |= GC_MD5SKIP   if $config{md5exclude} and /$config{md5exclude}/o;
+    $mask |= GC_PHNSKIP   if $config{phn_exclude} and /$config{phn_exclude}/o;
+    $mask |= GC_PHLSKIP   if $config{phl_exclude} and /$config{phl_exclude}/o;
+    $mask |= GC_SCORESKIP if $config{score_exclude} and /$config{score_exclude}/o;
+    $mask |= GC_PHRINC    if $config{flood_groups} and /$config{flood_groups}/o;
+    $mask |= GC_LOW_XPOST if $config{low_xpost_groups} and /$config{low_xpost_groups}/o;
+    $mask |= GC_MEOW      if $config{meow_groups} and /$config{meow_groups}/o;
+    $mask |= GC_TOPIC1    if $config{topic1_groups} and /$config{topic1_groups}/o;
+    $mask |= GC_TOPIC2    if $config{topic2_groups} and /$config{topic2_groups}/o;
+    $mask |= GC_LOCALHIER if /^local\./;
+    return $mask;
+}
+
+# Compute all deterministic regex-based properties for a cache miss.  Keep
+# moderation and Restricted_Groups outside this mask so the cache remains small,
+# predictable and independent of INN active-file state.
+sub classify_group_uncached {
+    my ($group) = @_;
+    return classify_group_primary_uncached($group)
+        | classify_group_followup_uncached($group);
+}
+
+# Return a cached classification for frequently repeated group names.  The
+# bounded cache uses one hash lookup on hits and a simple full clear on overflow;
+# no timestamps, linked lists, per-hit counters or log messages touch the hot
+# path.  Very long names are deliberately not retained, bounding key memory as
+# well as entry count.
+sub group_classification {
+    my ($group) = @_;
+    $group = '' if not defined $group;
+    return classify_group_uncached($group)
+        if length($group) > GROUP_CACHE_MAX_NAME_BYTES;
+
+    return $Group_Class_Cache{$group} if exists $Group_Class_Cache{$group};
+
+    if ($Group_Class_Cache_Size >= $config{group_class_cache_entries}) {
+        clear_group_class_cache();
+    }
+
+    my $mask = classify_group_uncached($group);
+    $Group_Class_Cache{$group} = $mask;
+    $Group_Class_Cache_Size++;
+    return $mask;
+}
+
+# When caching is disabled, preserve the historical amount of regex work: the
+# first loop evaluates only Newsgroups properties and the second loop only the
+# Newsgroups+Followup-To properties.  This avoids making the opt-out path slower.
+sub group_primary_classification {
+    my ($group) = @_;
+    return classify_group_primary_uncached($group)
+        if not $config{group_class_cache_enabled}
+            or not $config{group_class_cache_entries};
+    return group_classification($group);
+}
+
+sub group_followup_classification {
+    my ($group) = @_;
+    return classify_group_followup_uncached($group)
+        if not $config{group_class_cache_enabled}
+            or not $config{group_class_cache_entries};
+    return group_classification($group);
+}
+
 sub filter_art {
     $now = time;
     undef $body;
@@ -854,16 +1016,13 @@ sub filter_art {
     };
     $lines = $state{lines}; # Legacy alias retained for local hooks.
 
-    # Study the message BODY.  This used to be in the local config file but
-    # this seems more logical.
+    # Build the bounded lowercase body preview used by historical rules.
     if (not $config{nobase64}
     and $hdr{'Content-Transfer-Encoding'} =~ /^base64$/i
     and $hdr{'Content-Type'} =~ /^text/i) {
         $body = lc substr(MIME::Base64::decode($hdr{__BODY__} || ''), 0, $config{body_preview_bytes});
     } else {
         $body = lc substr($hdr{__BODY__} || '', 0, $config{body_preview_bytes});
-        study $hdr{__BODY__} if $config{study_max_lines}
-            and $state{lines} <= $config{study_max_lines};
     };
 
     maybe_reload_bad_files();
@@ -939,57 +1098,51 @@ sub filter_art {
     trimhashes() if $now - $Last_Trim >= $config{trim_interval};
     writestats() if $now - $Last_Stats >= $config{stats_interval};
 
-    # Check out the Newsgroups to which the article is posted
+    # Check out the Newsgroups to which the article is posted.  Stable
+    # regex-derived properties come from the bounded classification cache;
+    # Restricted_Groups and moderation retain their historical live checks.
     %gr = ();
     for (@groups) {
+        my $class = group_primary_classification($_);
         foreach my $item (@Restricted_List) {
             $gr{'rg_'.$item}++ if /$Restricted_Groups{$item}/;
         }
-        $gr{binary}++ if $config{bin_allowed} and /$config{bin_allowed}/o;
-        $gr{image}++ if $config{image_allowed} and /$config{image_allowed}/o;
-        $gr{bad_bin}++ if $config{bad_bin} and /$config{bad_bin}/o;
-        $gr{html}++ if $config{html_allowed} and /$config{html_allowed}/o;
-        $gr{mime_html}++ if $config{mime_html_allowed}
-            and /$config{mime_html_allowed}/o;
-        $gr{poison}++ if $config{poison_groups}
-            and /$config{poison_groups}/o;
-        $gr{reports}++ if $config{spam_report_groups}
-            and /$config{spam_report_groups}/o;
-        $gr{no_cancel}++ if $config{no_cancel_groups}
-            and /$config{no_cancel_groups}/o;
-        $gr{test}++ if /$config{test_groups}/o;
-        $gr{adult}++ if /$config{adult_groups}/o
-            and not /$config{not_adult_groups}/o;
-        $gr{faq}++ if /$config{faq_groups}/o;
-        $gr{ratio}++ if /$config{ratio_exclude}/o;
-        $gr{approved}++ if /$config{local_approved_groups}/o;
+        $gr{binary}++    if $class & GC_BINARY;
+        $gr{image}++     if $class & GC_IMAGE;
+        $gr{bad_bin}++   if $class & GC_BAD_BIN;
+        $gr{html}++      if $class & GC_HTML;
+        $gr{mime_html}++ if $class & GC_MIME_HTML;
+        $gr{poison}++    if $class & GC_POISON;
+        $gr{reports}++   if $class & GC_REPORTS;
+        $gr{no_cancel}++ if $class & GC_NO_CANCEL;
+        $gr{test}++      if $class & GC_TEST;
+        $gr{adult}++     if $class & GC_ADULT;
+        $gr{faq}++       if $class & GC_FAQ;
+        $gr{ratio}++     if $class & GC_RATIO;
+        $gr{approved}++  if $class & GC_APPROVED;
         if ($config{active_file}) {
             $gr{mod}++ if $Moderated{$_};
         } elsif (defined &INN::newsgroup) {
             $gr{mod}++ if INN::newsgroup($_) eq 'm';
         };
-
     };
 
-    # As above but check Newsgroups and Followup-To headers
+    # As above but check Newsgroups and Followup-To headers.  Groups already
+    # visited above are cache hits; only new Followup-To targets need regex work.
     for (@grpfup) {
-        $gr{skip}++ if $config{allexclude} and /$config{allexclude}/o;
-        $gr{fslskip}++ if $config{fsl_exclude} and /$config{fsl_exclude}/o;
-        $gr{md5skip}++ if $config{md5exclude} and /$config{md5exclude}/o;
-        $gr{phnskip}++ if $config{phn_exclude} and /$config{phn_exclude}/o;
-        $gr{phlskip}++ if $config{phl_exclude} and /$config{phl_exclude}/o;
-        $gr{scoreskip}++ if $config{score_exclude}
-            and /$config{score_exclude}/o;
-        $gr{phrinc}++ if $config{flood_groups} and /$config{flood_groups}/o;
-        $gr{low_xpost}++ if $config{low_xpost_groups}
-            and /$config{low_xpost_groups}/o;
-        $gr{meow}++ if $config{meow_groups}
-            and /$config{meow_groups}/o;
-        $gr{topic1}++ if $config{topic1_groups}
-            and /$config{topic1_groups}/o;
-        $gr{topic2}++ if $config{topic2_groups}
-            and /$config{topic2_groups}/o;
-        $gr{localhier}++ if /^local\./;
+        my $class = group_followup_classification($_);
+        $gr{skip}++      if $class & GC_SKIP;
+        $gr{fslskip}++   if $class & GC_FSLSKIP;
+        $gr{md5skip}++   if $class & GC_MD5SKIP;
+        $gr{phnskip}++   if $class & GC_PHNSKIP;
+        $gr{phlskip}++   if $class & GC_PHLSKIP;
+        $gr{scoreskip}++ if $class & GC_SCORESKIP;
+        $gr{phrinc}++    if $class & GC_PHRINC;
+        $gr{low_xpost}++ if $class & GC_LOW_XPOST;
+        $gr{meow}++      if $class & GC_MEOW;
+        $gr{topic1}++    if $class & GC_TOPIC1;
+        $gr{topic2}++    if $class & GC_TOPIC2;
+        $gr{localhier}++ if $class & GC_LOCALHIER;
     };
 
     # These only count if all Newsgroups match
@@ -1883,7 +2036,7 @@ sub filter_art {
 # Return the normalized prefix exposed to administrator-supplied body and URL
 # regexes.  This helper deliberately preserves the historical Cleanfeed
 # semantics: textual Base64 bodies are decoded and matching is performed on a
-# lowercase representation.  The 2026-07-03 bounded-scan optimization must not
+# lowercase representation.  The 2026.07.3 bounded-scan optimization must not
 # silently turn old case-insensitive rules into case-sensitive rules, nor hide
 # URLs and keywords contained in text/plain Base64 articles.
 #

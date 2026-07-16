@@ -29,4 +29,12 @@ local $config{MD5RateCutoff} = 10;
 local $config{MD5RateCeiling} = 5;
 ok(!validate_configuration(), 'cutoff above ceiling is rejected');
 
+get_config();
+local $config{group_class_cache_entries} = 65537;
+ok(!validate_configuration(), 'group classification cache is bounded');
+
+get_config();
+local $config{group_class_cache_enabled} = 2;
+ok(!validate_configuration(), 'group classification cache switch is boolean');
+
 done_testing();
