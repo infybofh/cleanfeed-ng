@@ -2,6 +2,18 @@
 
 ## 2026.07.3-rc2 - Development/testing tree
 
+- Added an early Perl-version bootstrap guard. If the interpreter embedded in
+  `innd` is older than Perl 5.38, cleanfeed-ng now emits an explicit fatal
+  diagnostic (using INN syslog when available, with a direct `news.err`
+  fallback) and refuses to initialize instead of leaving stale filter code with
+  undefined runtime state.
+- Added an initialization-complete guard for reload safety. A previously loaded
+  `filter_art()` surviving a failed reload now fails open, logs the bootstrap
+  error once, and does not touch configuration, counters or history objects.
+- Added the effective embedded Perl version and `initialization=ok` to the
+  one-time runtime banner, making accidental `update-alternatives` or libperl
+  changes visible directly in `news.notice`.
+
 - Fixed a fatal reload/runtime failure where an undefined Message-ID history
   queue could make `filter_art()` die and cause INN to disable Perl filtering.
   Queue initialization is now centralized, missing state is re-created

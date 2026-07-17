@@ -23,6 +23,13 @@
 > [!WARNING]
 > The `main` branch currently contains **2026.07.3-rc2**. It is under active testing and should be used at your own risk. Administrators who want the current stable, packaged baseline should use **2026.07.3-rc1** from the Releases page.
 
+> [!IMPORTANT]
+> cleanfeed-ng requires the Perl interpreter **embedded in `innd`** to be
+> version 5.38 or newer. The one-time runtime banner reports the actual embedded
+> version as `perl=v...`. Changing `/usr/bin/perl` or `update-alternatives` does
+> not replace the interpreter already loaded by a running `innd`; restart INN
+> completely after any Perl or libperl change.
+
 ## Project goals
 
 - Preserve the practical philosophy and proven filtering model of Cleanfeed.
@@ -125,6 +132,29 @@ On systems not using systemd, export the variable in the script or service
 manager that starts `innd`. Editing the fallback `$config_dir` directly in
 `cleanfeed` also works, but is discouraged because a later repository update
 may overwrite that local modification.
+
+## Perl version and failed-load diagnostics
+
+cleanfeed-ng performs a bootstrap check before normal initialization. If the
+Perl interpreter used by `innd` is older than 5.38, loading is aborted and an
+explicit message is sent to the INN error log, for example:
+
+```text
+filter: cleanfeed-ng fatal: Perl 5.38.0 or newer is required; the running interpreter is v5.34.0; filter not loaded
+```
+
+Check `news.err`, the system journal, and the general system log after a failed
+reload. A successful first article after load or reload produces a one-time
+runtime line similar to:
+
+```text
+filter: cleanfeed-ng runtime version=2026.07.3-rc2 perl=v5.38.2 initialization=ok ...
+```
+
+The version printed by `perl -V` in an interactive shell may differ from the
+libperl already embedded in a running `innd`. After changing Perl alternatives,
+packages, or libperl, use a full INN restart rather than only
+`ctlinnd reload filter.perl`.
 
 ## Quick verification
 

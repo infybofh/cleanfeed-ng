@@ -89,6 +89,8 @@ REQUIREMENTS
 ------------
 - INN2 with Perl filtering support enabled.
 - Perl 5.38 or newer. Ubuntu 24.04 LTS is the minimum supported platform baseline.
+  This requirement applies to the Perl interpreter embedded in innd, which may
+  differ from the /usr/bin/perl selected in an interactive shell.
 - Digest::MD5 is strongly recommended.
 - MIME::Base64 is recommended. If unavailable, decoded text/plain Base64
   preview processing is disabled, while independent binary signatures remain.
@@ -149,6 +151,34 @@ On systems not using systemd, export CLEANFEED_CONFIG_DIR in the service
 manager or startup script that launches innd. Editing the fallback $config_dir
 inside cleanfeed also works, but is discouraged because a repository update can
 overwrite that local modification.
+
+PERL VERSION AND FAILED-LOAD DIAGNOSTICS
+----------------------------------------
+cleanfeed-ng checks the Perl version during the earliest bootstrap phase. If
+innd is using Perl older than 5.38, the filter refuses to initialize and writes
+an explicit fatal diagnostic through INN syslog when available, or directly to
+the news.err facility as an early-startup fallback. Example:
+
+  filter: cleanfeed-ng fatal: Perl 5.38.0 or newer is required; \
+  the running interpreter is v5.34.0; filter not loaded
+
+A successful load reports the actual embedded interpreter in the one-time
+runtime banner:
+
+  filter: cleanfeed-ng runtime version=2026.07.3-rc2 perl=v5.38.2 \
+  initialization=ok ...
+
+Check /var/log/news/news.err, the journal and the system log after any failed
+filter reload. The output of "perl -V" only describes the interpreter selected
+for a new shell command; it does not replace libperl already embedded in a
+running innd process. After update-alternatives, Perl package, or libperl
+changes, restart INN completely. A ctlinnd reload alone cannot replace the
+embedded interpreter.
+
+If a failed reload leaves an older filter_art() definition in the embedded
+interpreter, the initialization guard makes that stale function fail open,
+logs the bootstrap error once, and prevents access to undefined configuration
+or history objects.
 
 INSTALLATION
 ------------

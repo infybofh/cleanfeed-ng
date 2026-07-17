@@ -13,6 +13,55 @@
 # Perl releases were removed because they complicated the hot path, obscured
 # behaviour, and could hide bugs that no supported deployment should need.
 #
+# Keep this bootstrap guard syntactically compatible with older Perl releases.
+# It runs during compilation, before the rest of the file is parsed or any
+# normal cleanfeed-ng logging callback can be assumed to exist.  On a failed
+# reload it also marks any previously loaded filter_art() implementation as
+# unsafe, preventing stale code from running with partially reset globals.
+our $Cleanfeed_Bootstrap_OK;
+our $Cleanfeed_Bootstrap_Error;
+our $Cleanfeed_Bootstrap_Error_Logged;
+
+BEGIN {
+    $Cleanfeed_Bootstrap_OK = 0;
+    $Cleanfeed_Bootstrap_Error = 'cleanfeed-ng initialization did not complete';
+    $Cleanfeed_Bootstrap_Error_Logged = 0;
+
+    if ($] < 5.038) {
+        my $running_version = defined $^V
+            ? 'v' . sprintf('%vd', $^V)
+            : $];
+        my $message = 'cleanfeed-ng fatal: Perl 5.38.0 or newer is required; '
+            . 'the running interpreter is ' . $running_version
+            . '; filter not loaded';
+
+        $Cleanfeed_Bootstrap_Error = $message;
+        my $logged = 0;
+
+        if (defined &INN::syslog) {
+            $logged = eval {
+                INN::syslog('E', $message);
+                1;
+            } ? 1 : 0;
+        }
+
+        # INN may not expose its Perl syslog callback this early.  When the
+        # current process is innd, write directly to the news.err facility.
+        if (not $logged and $0 =~ m{(?:^|/)innd(?:\z|[\s:])}) {
+            $logged = eval {
+                require Sys::Syslog;
+                Sys::Syslog::openlog('innd', 'ndelay,pid', 'news');
+                Sys::Syslog::syslog('err', '%s', 'filter: ' . $message);
+                Sys::Syslog::closelog();
+                1;
+            } ? 1 : 0;
+        }
+
+        warn 'filter: ' . $message . "\n" if not $logged;
+        die $message . "\n";
+    }
+}
+
 require 5.038;
 # This software is distributed under the terms of the Artistic License.
 # Please see the LICENSE file in the distribution.
@@ -623,37 +672,60 @@ $Xbot = '^2\.\d\.(?:\d\d? [a-z]|\d\d?)$|newsgroup bulk mailer'
 
 ##############################################################################
 
-get_config();
-setup_stuff();
+# Keep all top-level initialization inside one guarded transaction.  A failed
+# reload must never leave an older filter_art() running against partially reset
+# globals.  The error is logged, the load still fails as expected, and any
+# previously loaded guarded filter_art() will fail open without touching state.
+$Cleanfeed_Bootstrap_OK = 0;
+$Cleanfeed_Bootstrap_Error = 'cleanfeed-ng initialization in progress';
+$Cleanfeed_Bootstrap_Error_Logged = 0;
 
-# is this a reload?
-if (defined $Start_Time) {
-    writestats(1) if $MODE eq 'inn';        # write the stats file
-} else {
-    restore_emp() if $config{do_emp_dump};  # load the saved state
-    $Start_Time = time;
+my $cleanfeed_initialization_ok = eval {
+    get_config();
+    setup_stuff();
+
+    # is this a reload?
+    if (defined $Start_Time) {
+        writestats(1) if $MODE eq 'inn';        # write the stats file
+    } else {
+        restore_emp() if $config{do_emp_dump};  # load the saved state
+        $Start_Time = time;
+    }
+
+    # Optional policy tables populated by cleanfeed.local.
+    # Keys are Perl regular expressions; values are hash references.
+    %Peer_Policies = () unless %Peer_Policies;
+    %Hierarchy_Policies = () unless %Hierarchy_Policies;
+    %policy_rule_count = ();
+    %policy_peer_count = ();
+    %policy_hierarchy_count = ();
+    %top_peer_reject = () unless %top_peer_reject;
+    %top_host_reject = () unless %top_host_reject;
+    %top_group_reject = () unless %top_group_reject;
+    %rate_peer = () unless %rate_peer;
+    %rate_host = () unless %rate_host;
+    %Bad_File_Mtime = () unless %Bad_File_Mtime;
+    $Last_Bad_Mtime_Check = 0 unless defined $Last_Bad_Mtime_Check;
+    $Config_Fingerprint = '' unless defined $Config_Fingerprint;
+    $Last_Metrics_CSV = time unless defined $Last_Metrics_CSV;
+
+    $Last_Trim = time unless defined $Last_Trim;
+    $Last_Stats = time unless defined $Last_Stats;
+    $Do_Log = 0;
+
+    $Cleanfeed_Bootstrap_Error = '';
+    $Cleanfeed_Bootstrap_OK = 1;
+    1;
+};
+
+if (not $cleanfeed_initialization_ok) {
+    my $error = $@ || 'unknown initialization error';
+    $error =~ s/[\r\n]+/ /g;
+    $Cleanfeed_Bootstrap_OK = 0;
+    $Cleanfeed_Bootstrap_Error = 'cleanfeed-ng initialization failed: ' . $error;
+    bootstrap_log_error($Cleanfeed_Bootstrap_Error);
+    die $Cleanfeed_Bootstrap_Error . "\n";
 }
-
-# Optional policy tables populated by cleanfeed.local.
-# Keys are Perl regular expressions; values are hash references.
-%Peer_Policies = () unless %Peer_Policies;
-%Hierarchy_Policies = () unless %Hierarchy_Policies;
-%policy_rule_count = ();
-%policy_peer_count = ();
-%policy_hierarchy_count = ();
-%top_peer_reject = () unless %top_peer_reject;
-%top_host_reject = () unless %top_host_reject;
-%top_group_reject = () unless %top_group_reject;
-%rate_peer = () unless %rate_peer;
-%rate_host = () unless %rate_host;
-%Bad_File_Mtime = () unless %Bad_File_Mtime;
-$Last_Bad_Mtime_Check = 0 unless defined $Last_Bad_Mtime_Check;
-$Config_Fingerprint = '' unless defined $Config_Fingerprint;
-$Last_Metrics_CSV = time unless defined $Last_Metrics_CSV;
-
-$Last_Trim = time unless defined $Last_Trim;
-$Last_Stats = time unless defined $Last_Stats;
-$Do_Log = 0;
 
 ##############################################################################
 # end of the initialization code
@@ -1018,6 +1090,45 @@ sub article_is_fully_excluded {
     return 1;
 }
 
+# Report an initialization failure without assuming that INN has already made
+# its embedded-Perl syslog callback available.  The direct Sys::Syslog fallback
+# is used only inside innd; command-line checks retain a visible stderr error.
+sub bootstrap_log_error {
+    my ($message) = @_;
+    $message ||= 'cleanfeed-ng initialization did not complete';
+
+    my $logged = 0;
+    if (defined &INN::syslog) {
+        $logged = eval {
+            INN::syslog('E', $message);
+            1;
+        } ? 1 : 0;
+    }
+
+    if (not $logged and $0 =~ m{(?:^|/)innd(?:\z|[\s:])}) {
+        $logged = eval {
+            require Sys::Syslog;
+            Sys::Syslog::openlog('innd', 'ndelay,pid', 'news');
+            Sys::Syslog::syslog('err', '%s', 'filter: ' . $message);
+            Sys::Syslog::closelog();
+            1;
+        } ? 1 : 0;
+    }
+
+    warn 'filter: ' . $message . "\n" if not $logged;
+    return $logged;
+}
+
+# Emit a failed-bootstrap message once if a previous filter_art() survives an
+# unsuccessful reload.  Returning accept is safer than executing with undef
+# configuration and lets INN's own load failure handling remain authoritative.
+sub log_bootstrap_failure_once {
+    return if $Cleanfeed_Bootstrap_Error_Logged;
+    $Cleanfeed_Bootstrap_Error_Logged = 1;
+    bootstrap_log_error($Cleanfeed_Bootstrap_Error);
+    return;
+}
+
 # Log the effective runtime state once after every initial load or reload, at
 # the first article where INN::syslog is known to be available.  This is outside
 # the recurring hot path after the first boolean check has succeeded.
@@ -1029,8 +1140,13 @@ sub log_runtime_banner {
     my $config_state = $Local_Conf_Err ? 'failed'
         : $Local_Config_Loaded ? 'loaded'
         : 'not-loaded';
+    my $running_perl = defined $^V
+        ? 'v' . sprintf('%vd', $^V)
+        : $];
     slog('N', 'cleanfeed-ng runtime'
         . ' version=' . ($cleanfeed_ng_version || 'unknown')
+        . ' perl=' . $running_perl
+        . ' initialization=ok'
         . ' config_dir=' . (defined $config_dir ? $config_dir : 'disabled')
         . ' local_config=' . $config_state
         . ' policy_enabled=' . (defined $config{policy_enabled} ? $config{policy_enabled} : 'undef')
@@ -1049,6 +1165,11 @@ sub log_runtime_banner {
 }
 
 sub filter_art {
+    if (not $Cleanfeed_Bootstrap_OK) {
+        log_bootstrap_failure_once();
+        return '';
+    }
+
     $now = time;
     undef $body;
     undef $score;           # String representation of article score

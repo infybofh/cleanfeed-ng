@@ -3,6 +3,7 @@ use strict;
 use warnings;
 use Test::More;
 use FindBin;
+use File::Temp qw(tempdir);
 
 BEGIN {
     $ENV{CLEANFEED_CONFIG_DIR} = '';
@@ -25,7 +26,8 @@ our (@Captured_Syslog, %hdr, %state, %config, %Peer_Policies,
      $MIDhistory, $MID_History_Reinit_Logged, $Runtime_Banner_Logged,
      $Study_Max_Lines_Configured, $Local_Config_Loaded, $Local_Conf_Err,
      $Last_Trim, $Last_Stats, $Last_Bad_Mtime_Check, $Do_Log, $now,
-     $Start_Time);
+     $Start_Time, $Cleanfeed_Bootstrap_OK, $Cleanfeed_Bootstrap_Error,
+     $Cleanfeed_Bootstrap_Error_Logged);
 
 do "$FindBin::Bin/../cleanfeed"
     or die "Cannot load cleanfeed: " . ($@ || $!);
@@ -44,6 +46,59 @@ my @deprecated = grep { $_->[1] =~ /^Deprecated option study_max_lines\b/ }
     @Captured_Syslog;
 is(scalar @runtime, 1, 'runtime banner is logged once');
 is(scalar @deprecated, 1, 'study_max_lines warning is deferred and logged once');
+like($runtime[0][1], qr/\bperl=v?5\./,
+    'runtime banner reports the interpreter version used by the filter');
+like($runtime[0][1], qr/\binitialization=ok\b/,
+    'runtime banner confirms completed initialization');
+
+# A surviving filter_art() from an earlier successful load must fail open and
+# log once when a later reload leaves the bootstrap state incomplete.
+@Captured_Syslog = ();
+$Cleanfeed_Bootstrap_OK = 0;
+$Cleanfeed_Bootstrap_Error = 'cleanfeed-ng initialization failed: simulated';
+$Cleanfeed_Bootstrap_Error_Logged = 0;
+$MIDhistory = undef;
+is(filter_art(), '', 'incomplete bootstrap bypasses filtering without dying');
+is(filter_art(), '', 'repeated incomplete-bootstrap call still fails open');
+is(scalar grep({ $_->[1] =~ /initialization failed: simulated/ }
+        @Captured_Syslog), 1, 'incomplete bootstrap is logged exactly once');
+is(scalar grep({ $_->[1] =~ /MID history queue was unexpectedly undefined/ }
+        @Captured_Syslog), 0, 'MID recovery does not run before initialization succeeds');
+$Cleanfeed_Bootstrap_OK = 1;
+$Cleanfeed_Bootstrap_Error = '';
+$Cleanfeed_Bootstrap_Error_Logged = 0;
+ensure_mid_history();
+
+# Exercise the minimum-version bootstrap guard under the current interpreter by
+# raising only the temporary copy's required version.  The test runs outside
+# innd, so the fallback remains visible on stderr instead of touching syslog.
+{
+    my $tmpdir = tempdir(CLEANUP => 1);
+    my $source = "$FindBin::Bin/../cleanfeed";
+    my $copy = "$tmpdir/cleanfeed-too-new";
+    open my $in, '<', $source or die "Cannot read $source: $!";
+    local $/;
+    my $text = <$in>;
+    close $in;
+    my $old_guard = 'if ($] < 5.038) {';
+    my $new_guard = 'if ($] < 99.999) {';
+    my $guard_pos = index($text, $old_guard);
+    die 'Cannot locate bootstrap version guard in temporary source'
+        if $guard_pos < 0;
+    substr($text, $guard_pos, length($old_guard), $new_guard);
+    $text =~ s/require 5\.038;/require 5.000;/;
+    open my $out, '>', $copy or die "Cannot write $copy: $!";
+    print {$out} $text;
+    close $out;
+
+    my $output = qx{$^X "$copy" 2>&1};
+    my $exit = $?;
+    isnt($exit, 0, 'unsupported-Perl bootstrap guard aborts loading');
+    like($output, qr/Perl 5\.38\.0 or newer is required/,
+        'unsupported-Perl bootstrap guard reports the required version');
+    like($output, qr/filter not loaded/,
+        'unsupported-Perl bootstrap guard clearly reports filter refusal');
+}
 
 # A missing MID history queue must be recoverable and must never make trim or
 # statistics processing terminate the embedded Perl filter.
