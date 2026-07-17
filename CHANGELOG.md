@@ -2,6 +2,31 @@
 
 ## 2026.07.3-rc2 - Development/testing tree
 
+- Fixed a fatal reload/runtime failure where an undefined Message-ID history
+  queue could make `filter_art()` die and cause INN to disable Perl filtering.
+  Queue initialization is now centralized, missing state is re-created
+  defensively, and trim/statistics paths tolerate an unavailable queue.
+- Added a one-time runtime banner after each load or reload, emitted on the
+  first article when the INN syslog callback is available. It reports the
+  effective version, configuration directory, local-config state and principal
+  policy/binary settings.
+- Deferred the `study_max_lines` deprecation notice to the same first-article
+  runtime point so it is not lost during initial embedded-Perl startup.
+- Restored the historical `allexclude` ordering before the new lightweight
+  guards and policy engine. Articles whose complete Newsgroups/Followup-To
+  distribution matches `allexclude` (including the default `linux.*` and
+  `mailing.*` hierarchies) bypass filtering, while crossposts to any
+  non-excluded group remain fully checked.
+- Fixed policy-mode rejects being logged twice (`rule=policy.binary` followed
+  by `rule=other`). Reject mode now emits and counts one definitive event with
+  the explicit stable rule and corresponding `CF-POLICY-*` code.
+- Added regression coverage for MID-history recovery, runtime-banner behaviour,
+  historical `allexclude` semantics, crosspost handling, and single-event
+  policy rejection logging.
+- Documented the complete `CLEANFEED_CONFIG_DIR` setup, including its
+  set/unset/empty semantics, a Debian/Ubuntu systemd override, runtime
+  verification, and the requirement for one full INN restart after changing
+  the service environment.
 - Removed the obsolete Perl `study()` call from the synchronous article path.
 - Kept `study_max_lines` temporarily accepted and ignored, with one runtime
   deprecation notice when explicitly configured and a checker warning from

@@ -95,17 +95,60 @@ REQUIREMENTS
 - The INN runtime user (normally news) must be able to read the configuration
   and write any enabled state, statistics or log files.
 
-DIRECTORY LAYOUT
-----------------
+DIRECTORY LAYOUT AND CLEANFEED_CONFIG_DIR
+-----------------------------------------
 Cleanfeed historically defaults to:
 
   /usr/local/news/cleanfeed/etc
 
-The directory can be overridden without editing the filter:
+The directory can and normally should be selected without editing the filter by
+setting CLEANFEED_CONFIG_DIR in the environment inherited by the innd process.
+The three possible states are:
 
-  CLEANFEED_CONFIG_DIR=/etc/news/cleanfeed
+  CLEANFEED_CONFIG_DIR=/some/path
+      Read cleanfeed.local and external bad_*/trusted_* files from /some/path.
+
+  CLEANFEED_CONFIG_DIR=''
+      Disable all external configuration files. This is intended mainly for
+      syntax checks, regression tests and controlled diagnostics.
+
+  CLEANFEED_CONFIG_DIR not set
+      Use the compiled fallback /usr/local/news/cleanfeed/etc.
 
 The examples below use /etc/news/cleanfeed. Use one location consistently.
+
+SYSTEMD SETUP (DEBIAN/UBUNTU)
+-----------------------------
+On Debian and Ubuntu package installations, INN normally runs as the inn2
+systemd service. Create a service override:
+
+  systemctl edit inn2
+
+Insert:
+
+  [Service]
+  Environment="CLEANFEED_CONFIG_DIR=/etc/news/cleanfeed"
+
+Then apply the new process environment with:
+
+  systemctl daemon-reload
+  systemctl restart inn2
+
+Verify the environment inherited by the running innd process:
+
+  sh -c 'tr "\\0" "\\n" < /proc/$(pidof innd)/environ | \\
+    grep "^CLEANFEED_CONFIG_DIR="'
+
+IMPORTANT: ctlinnd reload filter.perl re-evaluates the Perl filter and reloads
+its files, but it cannot alter environment variables already inherited by the
+running innd process. A full INN restart is therefore required after adding or
+changing CLEANFEED_CONFIG_DIR in systemd. Later edits to cleanfeed.local or the
+external lists only need the normal filter reload.
+
+On systems not using systemd, export CLEANFEED_CONFIG_DIR in the service
+manager or startup script that launches innd. Editing the fallback $config_dir
+inside cleanfeed also works, but is discouraged because a repository update can
+overwrite that local modification.
 
 INSTALLATION
 ------------

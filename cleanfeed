@@ -18,9 +18,11 @@ require 5.038;
 # Please see the LICENSE file in the distribution.
 #
 
-# CHANGE THE BELOW SETTING!
 # Directory where cleanfeed.local and the other configuration files live.
-# Set this to undef to not use any external file.
+# Prefer setting CLEANFEED_CONFIG_DIR in the environment of the innd service
+# instead of editing this fallback.  See README.md and README.txt for systemd
+# and non-systemd setup instructions.  An explicitly empty environment value
+# disables all external configuration files.
 
 $config_dir = exists $ENV{CLEANFEED_CONFIG_DIR}
     ? ($ENV{CLEANFEED_CONFIG_DIR} eq '' ? undef : $ENV{CLEANFEED_CONFIG_DIR})
@@ -84,6 +86,9 @@ use constant {
 %Group_Class_Cache = ();
 $Group_Class_Cache_Size = 0;
 $Study_Max_Lines_Configured = 0;
+$Local_Config_Loaded = 0;
+$Runtime_Banner_Logged = 0;
+$MID_History_Reinit_Logged = 0;
 
 # default configuration
 sub get_config {
@@ -438,6 +443,7 @@ sub get_config {
     # Load up the external config file
     my $local_file = "$config_dir/cleanfeed.local";
     $Local_Conf_Err = 0;
+    $Local_Config_Loaded = 0;
     $Study_Max_Lines_Configured = 0;
     if ($config_dir and -e $local_file) {
         undef %config_local;
@@ -451,6 +457,7 @@ sub get_config {
                 $Local_Conf_Err = 1;
             } else {
                 local_config() if defined &local_config;
+                $Local_Config_Loaded = 1;
                 $Study_Max_Lines_Configured = 1
                     if exists $config_local{study_max_lines}
                         or (defined $config{study_max_lines}
@@ -490,11 +497,8 @@ sub get_config {
 
     validate_configuration() if $config{validate_config};
 
-    if ($Study_Max_Lines_Configured) {
-        slog('N', 'Deprecated option study_max_lines is ignored; study() is a '
-            . 'no-op on supported Perl versions and this option will be removed '
-            . 'in a future release');
-    }
+    # The deprecation warning is emitted with the one-time runtime banner.
+    # During the initial Perl load INN::syslog may not yet be available.
 
     clear_group_class_cache();
     @Restricted_List = keys %Restricted_Groups;
@@ -789,6 +793,27 @@ sub validate_configuration {
     return @errors ? 0 : 1;
 }
 
+# Initialise the rejected Message-ID queue.  Keep this in a dedicated helper
+# because INN may reload the embedded Perl filter while preserving selected
+# package globals.  A missing queue must never be allowed to terminate
+# filter_art() and make INN disable Perl filtering.
+sub init_mid_history {
+    $MIDhistory = Cleanfeed::Queue->new();
+    $MIDhistory->maxlife($config{MIDmaxlife} * 3600)
+        if $MIDhistory and $config{MIDmaxlife};
+    return $MIDhistory;
+}
+
+sub ensure_mid_history {
+    return $MIDhistory if $MIDhistory;
+
+    init_mid_history();
+    if ($MIDhistory and not $MID_History_Reinit_Logged++) {
+        slog('E', 'MID history queue was unexpectedly undefined; reinitialized');
+    }
+    return $MIDhistory;
+}
+
 sub setup_stuff {
     # Try to load up MD5 module (use Digest::MD5, but old MD5 still works).
     if ($config{do_md5}) {
@@ -872,8 +897,7 @@ sub setup_stuff {
         $Suphistory->init(0, $config{supersedes_ceiling}, $config{supersedes_window});
     }
 
-    $MIDhistory = new Cleanfeed::Queue;
-    $MIDhistory->maxlife($config{MIDmaxlife} * 3600) if $config{MIDmaxlife};
+    init_mid_history();
 
     $timer{time} = time if $config{timer_info} and not $timer{time};
 }
@@ -980,6 +1004,50 @@ sub group_followup_classification {
     return group_classification($group);
 }
 
+# Preserve the historical Cleanfeed allexclude semantics before the newer
+# guard and policy engines run.  Filtering is skipped only when every unique
+# Newsgroups and Followup-To target matches allexclude; any crosspost outside
+# the excluded hierarchies remains fully checked.
+sub article_is_fully_excluded {
+    my ($groups_ref) = @_;
+    return 0 if not $groups_ref or not @$groups_ref;
+
+    for my $group (@$groups_ref) {
+        return 0 if not (group_followup_classification($group) & GC_SKIP);
+    }
+    return 1;
+}
+
+# Log the effective runtime state once after every initial load or reload, at
+# the first article where INN::syslog is known to be available.  This is outside
+# the recurring hot path after the first boolean check has succeeded.
+sub log_runtime_banner {
+    return if $Runtime_Banner_Logged;
+    return if not defined &INN::syslog;
+    $Runtime_Banner_Logged = 1;
+
+    my $config_state = $Local_Conf_Err ? 'failed'
+        : $Local_Config_Loaded ? 'loaded'
+        : 'not-loaded';
+    slog('N', 'cleanfeed-ng runtime'
+        . ' version=' . ($cleanfeed_ng_version || 'unknown')
+        . ' config_dir=' . (defined $config_dir ? $config_dir : 'disabled')
+        . ' local_config=' . $config_state
+        . ' policy_enabled=' . (defined $config{policy_enabled} ? $config{policy_enabled} : 'undef')
+        . ' policy_mode=' . (defined $config{policy_mode} ? $config{policy_mode} : 'undef')
+        . ' policy_log_matches=' . (defined $config{policy_log_matches} ? $config{policy_log_matches} : 'undef')
+        . ' policy_log_accepts=' . (defined $config{policy_log_accepts} ? $config{policy_log_accepts} : 'undef')
+        . ' block_all_binaries=' . (defined $config{block_all_binaries} ? $config{block_all_binaries} : 'undef')
+        . ' allow_binary=' . (defined $config{policy_default_allow_binary} ? $config{policy_default_allow_binary} : 'undef'));
+
+    if ($Study_Max_Lines_Configured) {
+        slog('N', 'Deprecated option study_max_lines is ignored; study() is a '
+            . 'no-op on supported Perl versions and this option will be removed '
+            . 'in a future release');
+    }
+    return;
+}
+
 sub filter_art {
     $now = time;
     undef $body;
@@ -1007,6 +1075,9 @@ sub filter_art {
 
     $status{articles}++;
     $timer{articles}++ if $config{timer_info};
+
+    ensure_mid_history() if not $MIDhistory;
+    log_runtime_banner() if not $Runtime_Banner_Logged;
 
     # count the lines in the article - late-model INN does this for us.
     if (defined $hdr{__LINES__}) {
@@ -1086,6 +1157,16 @@ sub filter_art {
     $state{grpfupcnt} = scalar @grpfup;
     $state{article_bytes} = length($hdr{__BODY__} || '');
     $state{peer} = policy_peer_identity();
+
+    # Historical Cleanfeed bypass: mailing.* and linux.* (plus local additions)
+    # are not inspected when every Newsgroups/Followup-To target is excluded.
+    # Run this before the newer binary guards and policy engine so the original
+    # semantics are not accidentally overridden.
+    if (article_is_fully_excluded(\@grpfup)) {
+        trimhashes() if $now - $Last_Trim >= $config{trim_interval};
+        writestats() if $now - $Last_Stats >= $config{stats_interval};
+        return '';
+    }
 
     my $guard_result = apply_lightweight_guards();
     return $guard_result if defined $guard_result and $guard_result ne '';
@@ -2296,7 +2377,8 @@ sub reject {
 # XXX $config{block_extra_reposts}
 # XXX for reposts       and not $hdr{Control}
         ) {
-        $MIDhistory->add($hdr{'Message-ID'});
+        my $mid_history = ensure_mid_history();
+        $mid_history->add($hdr{'Message-ID'}) if $mid_history;
     }
 
     $status{rejected}++;
@@ -2931,7 +3013,12 @@ sub apply_policy_engine {
     return '' if $mode eq 'off';
     for my $match (@matches) {
         my ($rule, $reason) = @$match;
-        policy_count($rule, $state{peer}, $groups[0]) if $mode ne 'reject';
+
+        # reject() performs the definitive count and structured event for
+        # reject mode.  Logging here as well produced duplicate events and the
+        # second event lost the explicit rule, falling back to rule=other.
+        next if $mode eq 'reject';
+        policy_count($rule, $state{peer}, $groups[0]);
         policy_log_event($mode, $rule, $reason) if $config{policy_log_matches};
     }
     if ($mode eq 'audit') {
@@ -2944,7 +3031,10 @@ sub apply_policy_engine {
         # Storage or routing decisions belong in INN feed configuration.
         return '';
     }
-    return reject($matches[0][1], $matches[0][0]) if $mode eq 'reject';
+    if ($mode eq 'reject') {
+        my ($rule, $reason) = @{$matches[0]};
+        return reject($reason, $reason, $rule);
+    }
     return '';
 }
 
@@ -3169,12 +3259,16 @@ sub filter_messageid {
         return 'No';
     }
 
-    if ($config{block_late_cancels}
-            and (($id =~ /^<cancel\.[a-z0-9]{4}\.(.+)/
-                    and $MIDhistory->check('<'.$1))
-                or ($id =~ /^<cancel\.(.+)/ and $MIDhistory->check('<'.$1)))) {
-        $status{refused}++;
-        return 'No';
+    if ($config{block_late_cancels}) {
+        my $mid_history = ensure_mid_history();
+        if ($mid_history
+                and (($id =~ /^<cancel\.[a-z0-9]{4}\.(.+)/
+                        and $mid_history->check('<'.$1))
+                    or ($id =~ /^<cancel\.(.+)/
+                        and $mid_history->check('<'.$1)))) {
+            $status{refused}++;
+            return 'No';
+        }
     }
 
     return '';
@@ -3350,7 +3444,7 @@ sub writestats {
     my $phrhashentries = $PHRhistory ? $PHRhistory->count : 0;
     my $fslhashentries = $FSLhistory ? $FSLhistory->count : 0;
     my $superentries   = $Suphistory ? $Suphistory->count : 0;
-    my $midhistentries = $MIDhistory->count;
+    my $midhistentries = $MIDhistory ? $MIDhistory->count : 0;
 
     if ($config{inn_syslog_status}) {
         my $message = 'status: ';
@@ -3462,7 +3556,7 @@ sub trimhashes {
     $PHRhistory->trim if $PHRhistory;
     $FSLhistory->trim if $FSLhistory;
     $Suphistory->trim if $Suphistory;
-    $MIDhistory->trim;
+    $MIDhistory->trim if $MIDhistory;
 
     # rotate log if necessary
     if ($Do_Log == 1) {

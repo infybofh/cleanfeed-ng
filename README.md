@@ -71,6 +71,61 @@ YYYY.MM.VV[-alN|-beN|-rcN]
 4. For Perl regex examples, see [`docs/REGEX-COOKBOOK.md`](docs/REGEX-COOKBOOK.md) when present and [`samples/README.txt`](samples/README.txt).
 5. Begin new or changed policies in `audit` mode and inspect real traffic before enabling `reject`.
 
+## Configuring `CLEANFEED_CONFIG_DIR`
+
+`cleanfeed-ng` reads `cleanfeed.local` and the external `bad_*` / `trusted_*`
+files from the directory selected by the `CLEANFEED_CONFIG_DIR` environment
+variable.
+
+Its behaviour is:
+
+```text
+CLEANFEED_CONFIG_DIR=/some/path   use /some/path
+CLEANFEED_CONFIG_DIR=''           disable all external configuration files
+variable not set                  use /usr/local/news/cleanfeed/etc
+```
+
+The empty value is mainly useful for syntax checks and tests. For a real INN
+installation, set an explicit directory in the environment of the **innd
+service**. On Debian or Ubuntu installations using the `inn2` systemd service:
+
+```sh
+sudo systemctl edit inn2
+```
+
+Add:
+
+```ini
+[Service]
+Environment="CLEANFEED_CONFIG_DIR=/etc/news/filter/cleanfeed-ng"
+```
+
+Then apply it with a full restart:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl restart inn2
+```
+
+Verify the environment inherited by the running `innd` process:
+
+```sh
+sudo sh -c 'tr "\\0" "\\n" < /proc/$(pidof innd)/environ | \
+  grep "^CLEANFEED_CONFIG_DIR="'
+```
+
+> [!IMPORTANT]
+> `ctlinnd reload filter.perl` reloads the Perl filter and its configuration,
+> but it cannot change environment variables already inherited by the running
+> `innd` process. After adding or changing `CLEANFEED_CONFIG_DIR` in systemd or
+> another startup script, restart INN completely once. Later changes inside
+> `cleanfeed.local` only require the normal filter reload.
+
+On systems not using systemd, export the variable in the script or service
+manager that starts `innd`. Editing the fallback `$config_dir` directly in
+`cleanfeed` also works, but is discouraged because a later repository update
+may overwrite that local modification.
+
 ## Quick verification
 
 From the extracted package directory:
