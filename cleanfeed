@@ -138,6 +138,8 @@ $Study_Max_Lines_Configured = 0;
 $Local_Config_Loaded = 0;
 $Runtime_Banner_Logged = 0;
 $MID_History_Reinit_Logged = 0;
+%Prepared_Output_Directory = ();
+%Output_Path_Warning_Logged = ();
 
 # default configuration
 sub get_config {
@@ -297,10 +299,17 @@ sub get_config {
 
     pid_file => '',
 
-    # crude stats on what the filter is doing
-    statfile => '',
-    html_statfile => '',
-    inn_syslog_status => 0,         # status to syslog (late-model INN only)
+    # Legacy status/statistics output.  Missing output files/directories are
+    # prepared at runtime when permissions permit; failures are reported once to
+    # the news error log with an instruction for the newsmaster.
+    statfile => '/var/www/cleanfeed.stat',
+        # Legacy text report.  It includes configuration details; publish it only
+        # when that information is intentionally exposed.
+    html_statfile => '/var/www/cleanfeed.html',
+        # Self-contained HTML status page, refreshed at stats_interval.
+    inn_syslog_status => 1,
+        # Emit periodic "filter: status:" summaries through INN::syslog; these
+        # are normally routed to news.notice and recognized by innreport.
 
     timer_info => 1,                # timing information (arts/second) in status report?
     body_preview_bytes => 16384,     # decoded/lowercase preview used by legacy rules
@@ -326,18 +335,29 @@ sub get_config {
     policy_max_peer_counters => 500,
     policy_max_hierarchy_counters => 500,
 
-    # Simple operational metrics.  All outputs are optional.
+    # Lightweight operational metrics.  Counters remain bounded and output is
+    # written only at the statistics interval, never for every article.
     metrics_enabled => 1,
-    metrics_status_file => '',       # atomic key=value snapshot
-    metrics_csv_file => '',          # append-only CSV history
+        # Master switch for counters and all metrics outputs.
+    metrics_status_file => '/var/log/news/cleanfeed.status',
+        # Atomic key=value snapshot for scripts and monitoring tools.
+    metrics_csv_file => '/var/log/news/cleanfeed-statistics.csv',
+        # Append-only cumulative CSV history.
     metrics_csv_interval => 300,
+        # Minimum seconds between CSV rows; recommended range 60..86400.
     metrics_syslog => 0,
+        # Emit a compact periodic metrics line through INN::syslog/news.notice.
     metrics_by_rule => 1,
+        # Retain bounded per-rule counters.
     metrics_by_peer => 1,
+        # Retain bounded per-peer counters.
     metrics_by_hierarchy => 1,
+        # Retain bounded first-component hierarchy counters.
 
-    debug_batch_directory => '',    # directory for debugging batches
-    debug_batch_size => 0,          # max size of batch files before rotation
+    # Debug batches are written only when an existing rule explicitly calls the
+    # debug helpers.  The directory is prepared once and files rotate at 10 MiB.
+    debug_batch_directory => '/var/spool/news/cleanfeed',
+    debug_batch_size => 10485760,
 
     ### binaries allowed if groups match
     bin_allowed => '^bin[a.]|\.bin[aei.]|\.bin$|^fur\.artwork'.
@@ -494,6 +514,8 @@ sub get_config {
     $Local_Conf_Err = 0;
     $Local_Config_Loaded = 0;
     $Study_Max_Lines_Configured = 0;
+    %Prepared_Output_Directory = ();
+    %Output_Path_Warning_Logged = ();
     if ($config_dir and -e $local_file) {
         undef %config_local;
         undef %config_append;
@@ -1161,6 +1183,10 @@ sub log_runtime_banner {
             . 'no-op on supported Perl versions and this option will be removed '
             . 'in a future release');
     }
+
+    # Prepare configured report/metrics/debug paths once, outside the recurring
+    # article hot path.  Any permission problem is logged once per load/reload.
+    prepare_configured_output_paths();
     return;
 }
 
@@ -3293,48 +3319,235 @@ sub policy_log_event {
     slog('N', join(' ', @parts));
 }
 
-sub atomic_write_file {
-    my ($path, $content) = @_;
-    return 1 if !$path;
+sub output_path_log_once {
+    my ($key, $level, $message) = @_;
+    return if $Output_Path_Warning_Logged{$key};
+
+    # During the earliest load phase INN may not have installed its syslog
+    # callback yet.  Do not mark the warning as emitted in that case: the
+    # first article/runtime banner will retry and give the newsmaster the
+    # actionable diagnostic instead of losing it silently.
+    return if not defined &INN::syslog;
+
+    $Output_Path_Warning_Logged{$key} = 1;
+    slog($level, $message);
+    return;
+}
+
+sub output_parent_directory {
+    my ($path) = @_;
+    return '.' if not defined $path or $path eq '';
+    require File::Basename;
+    return File::Basename::dirname($path);
+}
+
+# Create a configured directory when possible.  Successful preparation is
+# cached so debug writes do not add repeated filesystem checks to later calls.
+sub ensure_output_directory {
+    my ($directory, $label, $mode) = @_;
+    return 1 if not defined $directory or $directory eq '' or $directory eq '.';
+    return 1 if $Prepared_Output_Directory{$directory};
+    $mode ||= 0750;
+
+    if (-e $directory and not -d $directory) {
+        output_path_log_once("not-directory:$directory", 'E',
+            "Cannot use $label directory $directory: path exists but is not a directory; "
+            . 'fix the path or disable the corresponding output');
+        return 0;
+    }
+
+    if (not -d $directory) {
+        my $ok = eval {
+            require File::Path;
+            File::Path::make_path($directory, { mode => $mode });
+            1;
+        };
+        if (not $ok or not -d $directory) {
+            my $error = $@ || $! || 'unknown error';
+            $error =~ s/[\r\n]+/ /g;
+            output_path_log_once("create-directory:$directory", 'E',
+                "Cannot create $label directory $directory: $error; create it manually "
+                . 'and grant write access to the INN runtime user, or disable the output');
+            return 0;
+        }
+    }
+
+    if (not -w $directory or not -x $directory) {
+        output_path_log_once("directory-permissions:$directory", 'E',
+            "$label directory $directory is not writable/searchable by the INN runtime user; "
+            . 'fix ownership or permissions, or disable the corresponding output');
+        return 0;
+    }
+
+    $Prepared_Output_Directory{$directory} = 1;
+    return 1;
+}
+
+# Ensure an output file can be created or updated.  Missing files are created
+# immediately so permission errors are reported at the first article after load,
+# rather than an hour later at the first scheduled statistics run.
+sub prepare_output_file {
+    my ($path, $label, $file_mode, $directory_mode) = @_;
+    return 1 if not $path;
+    $file_mode ||= 0640;
+    $directory_mode ||= 0750;
+
+    my $directory = output_parent_directory($path);
+
+    if (-e $path) {
+        if (not -f $path and not -l $path) {
+            output_path_log_once("not-file:$path", 'E',
+                "Cannot use $label $path: path exists but is not a regular file; "
+                . 'fix the path or disable the output');
+            return 0;
+        }
+
+        # A pre-created writable file is enough for direct updates even when the
+        # parent (notably /var/www) is intentionally not writable by news.
+        return 1 if -w $path;
+
+        # Atomic replacement can still update a read-only target when its parent
+        # directory is writable by the INN runtime user.
+        return 1 if ensure_output_directory(
+            $directory, $label, $directory_mode);
+
+        output_path_log_once("file-permissions:$path", 'E',
+            "$label $path is not writable by the INN runtime user and its parent "
+            . 'directory cannot replace it; fix ownership or permissions, or disable the output');
+        return 0;
+    }
+
+    return 0 if not ensure_output_directory(
+        $directory, $label, $directory_mode);
 
     require Fcntl;
+    my $fh;
+    if (not sysopen($fh, $path,
+            Fcntl::O_WRONLY() | Fcntl::O_CREAT() | Fcntl::O_APPEND(),
+            $file_mode)) {
+        output_path_log_once("create-file:$path", 'E',
+            "Cannot create $label $path: $!; create it manually and grant write "
+            . 'access to the INN runtime user, or disable the output');
+        return 0;
+    }
+    if (not close($fh)) {
+        output_path_log_once("close-file:$path", 'E',
+            "Cannot close newly created $label $path: $!");
+        return 0;
+    }
+    return 1;
+}
+
+sub prepare_configured_output_paths {
+    prepare_output_file($config{statfile}, 'legacy statistics file', 0644, 0755)
+        if $config{statfile};
+    prepare_output_file($config{html_statfile}, 'HTML statistics file', 0644, 0755)
+        if $config{html_statfile};
+    prepare_output_file($config{metrics_status_file}, 'metrics status file', 0640, 0750)
+        if $config{metrics_enabled} and $config{metrics_status_file};
+    prepare_output_file($config{metrics_csv_file}, 'metrics CSV file', 0640, 0750)
+        if $config{metrics_enabled} and $config{metrics_csv_file};
+    ensure_output_directory($config{debug_batch_directory},
+        'debug batch', 0750) if $config{debug_batch_directory};
+    return;
+}
+
+sub direct_write_file {
+    my ($path, $content, $label) = @_;
+    require Fcntl;
+    my $fh;
+    if (not sysopen($fh, $path, Fcntl::O_WRONLY() | Fcntl::O_TRUNC())) {
+        output_path_log_once("direct-open:$path", 'E',
+            "Cannot open $label $path for direct update: $!");
+        return 0;
+    }
+    if (not print {$fh} $content) {
+        close($fh);
+        output_path_log_once("direct-write:$path", 'E',
+            "Cannot write $label $path: $!");
+        return 0;
+    }
+    if (not close($fh)) {
+        output_path_log_once("direct-close:$path", 'E',
+            "Cannot close $label $path: $!");
+        return 0;
+    }
+    return 1;
+}
+
+sub atomic_write_file {
+    my ($path, $content, $label, $file_mode, $directory_mode) = @_;
+    return 1 if !$path;
+    $label ||= 'output file';
+    $file_mode ||= 0640;
+    $directory_mode ||= 0750;
+
+    return 0 if not prepare_output_file(
+        $path, $label, $file_mode, $directory_mode);
+
+    require Fcntl;
+    my $directory = output_parent_directory($path);
+
+    # Atomic replacement needs write/search permission on the parent directory.
+    # /var/www is commonly root-owned, so an administrator may instead pre-create
+    # a writable regular file.  In that case fall back to a direct overwrite and
+    # report the loss of atomic replacement once.
+    if ((not -w $directory or not -x $directory) and -f $path and -w $path
+            and not -l $path) {
+        output_path_log_once("non-atomic:$path", 'N',
+            "$label $path is writable but parent directory $directory is not; "
+            . 'using a non-atomic direct update. Grant directory write access or '
+            . 'choose another path to restore atomic replacement');
+        return direct_write_file($path, $content, $label);
+    }
+
     my $tmp = "$path.tmp.$$";
     my $fh;
 
     # O_EXCL prevents following a pre-created symlink or silently truncating an
-    # attacker-controlled file.  Metric directories must still be owned by the
+    # attacker-controlled file.  Output directories must still be owned by the
     # INN account and must not be writable by untrusted users.
     if (!sysopen($fh, $tmp,
-            Fcntl::O_WRONLY() | Fcntl::O_CREAT() | Fcntl::O_EXCL(), 0640)) {
-        slog('E', "Cannot create temporary file $tmp: $!");
+            Fcntl::O_WRONLY() | Fcntl::O_CREAT() | Fcntl::O_EXCL(), $file_mode)) {
+        output_path_log_once("atomic-create:$tmp", 'E',
+            "Cannot create temporary file $tmp for $label: $!");
         return 0;
     }
 
     if (!print {$fh} $content) {
         close($fh);
         unlink($tmp);
-        slog('E', "Cannot write temporary file $tmp: $!");
+        output_path_log_once("atomic-write:$tmp", 'E',
+            "Cannot write temporary file $tmp for $label: $!");
         return 0;
     }
     if (!close($fh)) {
         unlink($tmp);
-        slog('E', "Cannot close temporary file $tmp: $!");
+        output_path_log_once("atomic-close:$tmp", 'E',
+            "Cannot close temporary file $tmp for $label: $!");
         return 0;
     }
     if (!rename($tmp, $path)) {
         unlink($tmp);
-        slog('E', "Cannot rename $tmp to $path: $!");
+        output_path_log_once("atomic-rename:$path", 'E',
+            "Cannot rename $tmp to $path for $label: $!");
         return 0;
     }
     return 1;
 }
 
 sub metric_snapshot_lines {
+    my ($report_now) = @_;
+    $report_now = time if not defined $report_now;
+    my $started = defined $Start_Time ? $Start_Time : $report_now;
+    my $uptime = $report_now - $started;
+    $uptime = 0 if $uptime < 0;
+
     my @lines;
     push @lines, "cleanfeed_version=$cleanfeed_maintenance_version";
-    push @lines, "generated_epoch=$now";
-    push @lines, "started_epoch=$Start_Time";
-    push @lines, 'uptime_seconds=' . ($now - $Start_Time);
+    push @lines, "generated_epoch=$report_now";
+    push @lines, "started_epoch=$started";
+    push @lines, "uptime_seconds=$uptime";
     for my $key (qw(articles accepted rejected refused audited quarantined)) {
         push @lines, "$key=" . ($status{$key} || 0);
     }
@@ -3349,17 +3562,36 @@ sub metric_snapshot_lines {
 }
 
 sub write_metrics {
+    my ($report_now) = @_;
     return unless $config{metrics_enabled};
-    atomic_write_file($config{metrics_status_file}, metric_snapshot_lines()) if $config{metrics_status_file};
-    if ($config{metrics_csv_file} && $now - $Last_Metrics_CSV >= $config{metrics_csv_interval}) {
-        my $new = !-e $config{metrics_csv_file} || -z $config{metrics_csv_file};
-        my $csv;
-        if (open($csv, '>>', $config{metrics_csv_file})) {
-            print {$csv} "epoch,articles,accepted,rejected,refused,audited,quarantined\n" if $new;
-            print {$csv} join(',', $now, map { $status{$_} || 0 } qw(articles accepted rejected refused audited quarantined)) . "\n";
-            close($csv);
-            $Last_Metrics_CSV = $now;
-        } else { slog('E', "Cannot append $config{metrics_csv_file}: $!"); }
+    $report_now = time if not defined $report_now;
+
+    atomic_write_file($config{metrics_status_file},
+        metric_snapshot_lines($report_now), 'metrics status file', 0640, 0750)
+        if $config{metrics_status_file};
+
+    if ($config{metrics_csv_file}
+            && $report_now - $Last_Metrics_CSV >= $config{metrics_csv_interval}) {
+        my $path = $config{metrics_csv_file};
+        if (prepare_output_file($path, 'metrics CSV file', 0640, 0750)) {
+            my $new = !-e $path || -z $path;
+            my $csv;
+            if (open($csv, '>>', $path)) {
+                print {$csv} "epoch,articles,accepted,rejected,refused,audited,quarantined\n" if $new;
+                print {$csv} join(',', $report_now,
+                    map { $status{$_} || 0 }
+                    qw(articles accepted rejected refused audited quarantined)) . "\n";
+                if (close($csv)) {
+                    $Last_Metrics_CSV = $report_now;
+                } else {
+                    output_path_log_once("csv-close:$path", 'E',
+                        "Cannot close metrics CSV file $path: $!");
+                }
+            } else {
+                output_path_log_once("csv-open:$path", 'E',
+                    "Cannot append metrics CSV file $path: $!");
+            }
+        }
     }
     if ($config{metrics_syslog}) {
         slog('N', "metrics articles=" . ($status{articles}||0) . " accepted=" . ($status{accepted}||0) . " rejected=" . ($status{rejected}||0) . " audited=" . ($status{audited}||0) . " quarantined=" . ($status{quarantined}||0));
@@ -3460,6 +3692,12 @@ sub html_table_rows {
 # only at the configured statistics interval, never per article, so richer tables
 # do not add measurable work to the filtering hot path.
 sub write_html_stats {
+    my ($report_now) = @_;
+    $report_now = time if not defined $report_now;
+    my $started = defined $Start_Time ? $Start_Time : $report_now;
+    my $uptime = $report_now - $started;
+    $uptime = 0 if $uptime < 0;
+
     my $path = $config{html_statfile};
     return if !$path;
 
@@ -3488,9 +3726,9 @@ table{border-collapse:collapse;width:100%;margin-bottom:1.5rem}th,td{border:1px 
 </head><body>
 HTML_HEAD
     $html .= '<h1>cleanfeed-ng ' . html_escape($cleanfeed_ng_version) . "</h1>\n";
-    $html .= '<p>Generated ' . html_escape(scalar(localtime($now)))
-        . '; filter started ' . html_escape(scalar(localtime($Start_Time)))
-        . '; uptime ' . html_escape($now - $Start_Time) . " seconds.</p>\n";
+    $html .= '<p>Generated ' . html_escape(scalar(localtime($report_now)))
+        . '; filter started ' . html_escape(scalar(localtime($started)))
+        . '; uptime ' . html_escape($uptime) . " seconds.</p>\n";
     $html .= '<p class="warn"><strong>Warning:</strong> cleanfeed.local failed to load; built-in or previous valid settings are in use.</p>'
         if $Local_Conf_Err;
 
@@ -3543,19 +3781,23 @@ HTML_HEAD
     }
 
     $html .= "</body></html>\n";
-    atomic_write_file($path, $html);
+    atomic_write_file($path, $html, 'HTML statistics file', 0644, 0755);
 }
 
 # write a crude stat file including accept/reject numbers,
 # hash sizes, and current configuration
 sub writestats {
     my $noreset = $_[0] || 0;
-    $Last_Stats = $now unless $noreset;
+    my $report_now = time;
+    my $started = defined $Start_Time ? $Start_Time : $report_now;
+    my $uptime = $report_now - $started;
+    $uptime = 0 if $uptime < 0;
+    $Last_Stats = $report_now unless $noreset;
 
-    timer_stats() if $config{timer_info};
+    timer_stats($report_now) if $config{timer_info};
 
-    write_html_stats() if $config{html_statfile};
-    write_metrics();
+    write_html_stats($report_now) if $config{html_statfile};
+    write_metrics($report_now);
 
     return if not ($config{statfile} or $config{inn_syslog_status});
 
@@ -3582,16 +3824,19 @@ sub writestats {
     }
 
     return if not $config{statfile};
+    return if not prepare_output_file(
+        $config{statfile}, 'legacy statistics file', 0644, 0755);
 
     if (not open FILE, ">$config{statfile}") {
-        slog('E', "Cannot open $config{statfile}: $!");
+        output_path_log_once("stat-open:$config{statfile}", 'E',
+            "Cannot open legacy statistics file $config{statfile}: $!");
         return;
     }
     print FILE "Cleanfeed Version: $version ($version_date)\n"
         if $version and $version_date;
-    print FILE 'Filter started: ' . scalar(localtime $Start_Time) . "\n"
-    . 'Report generated: ' . scalar(localtime) . "\n"
-    . 'Uptime: ' . ($now - $Start_Time) . " seconds\n\n"
+    print FILE 'Filter started: ' . scalar(localtime $started) . "\n"
+    . 'Report generated: ' . scalar(localtime $report_now) . "\n"
+    . 'Uptime: ' . $uptime . " seconds\n\n"
     . "Accepted: $status{accepted}\nRejected: $status{rejected}\n";
     print FILE "Refused: $status{refused}\n" if $config{do_mid_filter};
     print FILE "MD5 entries: $md5hashentries\n"
@@ -3643,7 +3888,10 @@ sub writestats {
         print FILE "$_:\nNot Defined\n\n" if not $$_;
     };
 
-    close FILE;
+    if (not close FILE) {
+        output_path_log_once("stat-close:$config{statfile}", 'E',
+            "Cannot close legacy statistics file $config{statfile}: $!");
+    }
 }
 
 # figure out how many articles per second we're looking at and accepting
@@ -3656,15 +3904,21 @@ sub writestats {
 # $timer{total_rate} - articles checked per second since we've been running
 # $timer{total_accept_rate} - art. accepted per second since we've been running
 sub timer_stats {
-    my $uptime = $now - $Start_Time;
+    my ($report_now) = @_;
+    $report_now = time if not defined $report_now;
+    my $started = defined $Start_Time ? $Start_Time : $report_now;
+    my $uptime = $report_now - $started;
+    $uptime = 1 if $uptime < 1;
 
-    $timer{interval} = $now - $timer{time} || 1;
+    my $timer_started = defined $timer{time} ? $timer{time} : $report_now;
+    $timer{interval} = $report_now - $timer_started;
+    $timer{interval} = 1 if $timer{interval} < 1;
     $timer{rate} = (int ($timer{articles} / $timer{interval} * 10)) / 10;
     $timer{accept_rate} = (int ($timer{accepted} / $timer{interval} * 10)) / 10;
     $timer{total_rate} = (int ($status{articles} / $uptime * 10)) / 10;
     $timer{total_accept_rate} = (int ($status{accepted} / $uptime * 10)) / 10;
 
-    $timer{time} = $now;
+    $timer{time} = $report_now;
     $timer{articles} = 0;
     $timer{accepted} = 0;
     return 1;
@@ -3713,6 +3967,8 @@ sub logart {
     $format ||= 15;
 
     return if not $config{debug_batch_directory};
+    return if not ensure_output_directory(
+        $config{debug_batch_directory}, 'debug batch', 0750);
     checkrotate("$config{debug_batch_directory}/$file");
 
     if (not open(LOCAL, ">>$config{debug_batch_directory}/$file")) {
@@ -3792,6 +4048,8 @@ sub saveart {
     $format ||= 0;
 
     return if not $config{debug_batch_directory};
+    return if not ensure_output_directory(
+        $config{debug_batch_directory}, 'debug batch', 0750);
     checkrotate("$config{debug_batch_directory}/$file");
 
     if (not open(LOCAL, ">>$config{debug_batch_directory}/$file")) {
@@ -3827,11 +4085,14 @@ sub checkrotate {
     my ($batchfile) = @_;
     my $num = 1;
 
-    return if not $config{debug_batch_size}
-        or -s $batchfile < $config{debug_batch_size};
+    return if not $config{debug_batch_size} or not -e $batchfile;
+    return if -s $batchfile < $config{debug_batch_size};
 
     $num += 1 while -e "$batchfile.$num";       # Ensure filename is unique
-    rename $batchfile, "$batchfile.$num";       # Move it out of the way
+    if (not rename $batchfile, "$batchfile.$num") {
+        output_path_log_once("debug-rotate:$batchfile", 'E',
+            "Cannot rotate debug batch file $batchfile: $!");
+    }
 }
 
 ##############################################################################

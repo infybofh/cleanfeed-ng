@@ -284,10 +284,17 @@ sub local_config {
 
     pid_file => '',
 
-    # Legacy status/statistics output
-    statfile => '',
-    html_statfile => '',
-    inn_syslog_status => 0,         # status to syslog (late-model INN only)
+    # Legacy status/statistics output ---------------------------------------
+    # Missing parent directories/files are created automatically when the INN
+    # runtime user has permission.  Otherwise cleanfeed-ng logs a clear error in
+    # news.err/news.notice telling the newsmaster what must be fixed.
+    #
+    # WARNING: the legacy text report includes current configuration values and
+    # loaded-list summaries.  Publish it from a web root only when that disclosure
+    # is intentional.
+    statfile => '/var/www/cleanfeed.stat', # legacy text report; '' disables
+    html_statfile => '/var/www/cleanfeed.html', # self-contained HTML report; '' disables
+    inn_syslog_status => 1,         # emit periodic "filter: status:" via INN::syslog/news.notice
 
     timer_info => 1,                # timing information (arts/second) in status report?
     body_preview_bytes => 16384,     # decoded/lowercase preview used by legacy rules
@@ -323,7 +330,7 @@ sub local_config {
 
     # Lightweight metrics --------------------------------------------------
     metrics_enabled => 1,            # master switch for counters and output files
-    metrics_status_file => '/var/lib/news/cleanfeed/cleanfeed.status', # atomic key=value snapshot; '' disables
+    metrics_status_file => '/var/log/news/cleanfeed.status', # atomic key=value snapshot; '' disables
     metrics_csv_file => '/var/log/news/cleanfeed-statistics.csv', # append-only cumulative CSV; '' disables
     metrics_csv_interval => 300,     # seconds between CSV rows; recommended 60..86400
     metrics_syslog => 0,             # emit a periodic compact metrics line via INN syslog
@@ -331,8 +338,11 @@ sub local_config {
     metrics_by_peer => 1,            # retain bounded per-peer counters
     metrics_by_hierarchy => 1,       # retain bounded first-component hierarchy counters
 
-    debug_batch_directory => '',    # directory for debugging batches
-    debug_batch_size => 0,          # max size of batch files before rotation
+    # Debug batches ---------------------------------------------------------
+    # The directory is created automatically when possible.  Batch files are
+    # created only when an existing debug path calls logart()/saveart().
+    debug_batch_directory => '/var/spool/news/cleanfeed', # '' disables debug batches
+    debug_batch_size => 10485760,    # rotate each batch at 10 MiB
 
     ### binaries allowed if groups match
     bin_allowed => '^bin[a.]|\.bin[aei.]|\.bin$|^fur\.artwork'.

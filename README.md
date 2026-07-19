@@ -156,6 +156,48 @@ libperl already embedded in a running `innd`. After changing Perl alternatives,
 packages, or libperl, use a full INN restart rather than only
 `ctlinnd reload filter.perl`.
 
+## Default reports, metrics, and debug paths
+
+The RC2 defaults enable the lightweight reports and use these locations:
+
+```text
+/var/www/cleanfeed.stat
+/var/www/cleanfeed.html
+/var/log/news/cleanfeed.status
+/var/log/news/cleanfeed-statistics.csv
+/var/spool/news/cleanfeed/
+```
+
+At the first article after load or reload, cleanfeed-ng prepares the configured
+parent directories and output files when the INN runtime user has permission.
+If it cannot create or update a path, it emits a clear one-time diagnostic to
+the news log telling the newsmaster to fix ownership/permissions or disable the
+corresponding option.
+
+`/var/www` is commonly owned by root and intentionally not writable by `news`.
+In that case, pre-create the two web files rather than making the entire web
+root writable:
+
+```sh
+sudo install -o news -g news -m 0644 /dev/null /var/www/cleanfeed.stat
+sudo install -o news -g news -m 0644 /dev/null /var/www/cleanfeed.html
+sudo install -d -o news -g news -m 0750 /var/spool/news/cleanfeed
+```
+
+When the parent of an existing HTML/status file is not writable, cleanfeed-ng
+uses a direct overwrite instead of atomic rename and reports that fallback once.
+The metrics files under `/var/log/news` remain atomic when that directory is
+writable by `news`.
+
+> [!WARNING]
+> The legacy text file `cleanfeed.stat` includes current configuration values
+> and summaries of loaded rule lists. Do not expose it publicly unless that is
+> intentional. The HTML report contains operational counters and is the safer
+> page to publish.
+
+Set any path to an empty string to disable that output. Set
+`debug_batch_directory => ''` to disable debug batch capture.
+
 ## Quick verification
 
 From the extracted package directory:

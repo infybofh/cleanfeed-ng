@@ -195,10 +195,17 @@ INSTALLATION
      cp -a /etc/news/filter/filter_innd.pl \
        /etc/news/filter/filter_innd.pl.backup-$(date +%Y%m%d-%H%M%S)
 
-3. Create the configuration/state directories:
+3. Create the configuration and debug directories, and pre-create the web
+   reports if /var/www is not writable by the news user:
 
      install -d -o news -g news -m 0750 /etc/news/cleanfeed
-     install -d -o news -g news -m 0750 /var/lib/news/cleanfeed
+     install -d -o news -g news -m 0750 /var/spool/news/cleanfeed
+     install -o news -g news -m 0644 /dev/null /var/www/cleanfeed.stat
+     install -o news -g news -m 0644 /dev/null /var/www/cleanfeed.html
+
+   cleanfeed-ng will create missing configured directories/files automatically
+   when permissions permit. Otherwise it logs a one-time diagnostic explaining
+   which path needs ownership/permission changes or should be disabled.
 
 4. Install the runtime filter:
 
@@ -372,16 +379,38 @@ safe:
 
 No HTTP listener or exporter process is embedded in cleanfeed-ng.
 
-Recommended initial values:
+Default output values:
 
+  statfile                 => /var/www/cleanfeed.stat
+  html_statfile            => /var/www/cleanfeed.html
+  inn_syslog_status        => 1
   metrics_enabled          => 1
-  metrics_status_file      => /var/lib/news/cleanfeed/cleanfeed.status
+  metrics_status_file      => /var/log/news/cleanfeed.status
+  metrics_csv_file         => /var/log/news/cleanfeed-statistics.csv
   metrics_csv_interval     => 300
   metrics_syslog           => 0
+  debug_batch_directory    => /var/spool/news/cleanfeed
+  debug_batch_size         => 10485760
   policy_log_accepts       => 0
 
-The news user must be able to create/rename the status file and append to the
-CSV. Keep these files on local storage, not an NFS/network filesystem.
+At the first article after load/reload, cleanfeed-ng prepares configured output
+paths. Missing directories and files are created when the INN runtime user has
+permission. Failures are reported once through the news log with a direct
+instruction to fix ownership/permissions or disable the output.
+
+/var/www is normally root-owned. Do not make the entire web root writable by
+news. Pre-create cleanfeed.stat and cleanfeed.html as writable files owned by
+news. Atomic replacement requires a writable parent directory; when only the
+existing file is writable, cleanfeed-ng falls back to a direct update and logs
+that fact once.
+
+WARNING: cleanfeed.stat contains current configuration values and summaries of
+loaded rule lists. Expose it over HTTP only if that disclosure is intentional.
+The HTML status page is the safer public report.
+
+The news user must be able to create/rename the metrics status file and append
+to the CSV. Keep these files on local storage, not an NFS/network filesystem.
+Set any file path or debug_batch_directory to an empty string to disable it.
 
 EXTERNAL bad_* FILES
 --------------------

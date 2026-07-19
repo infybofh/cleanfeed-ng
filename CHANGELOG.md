@@ -2,6 +2,26 @@
 
 ## 2026.07.3-rc2 - Development/testing tree
 
+- Fixed statistics generation during filter reload before the next article.
+  Report functions now use a local report timestamp instead of the article-path
+  global `$now`, preventing empty `generated_epoch` values and negative uptime.
+- Enabled periodic `filter: status:` reporting through INN syslog by default
+  (`inn_syslog_status => 1`).
+- Added practical default paths for the legacy text/HTML reports, key=value and
+  CSV metrics, and rotated debug batches.
+- Added one-time output-path preparation at the first article after load/reload.
+  Missing directories/files are created when permissions permit; otherwise a
+  clear news-log diagnostic tells the newsmaster to fix permissions or disable
+  that output.
+- Added a safe non-atomic fallback for pre-created writable files under a
+  root-owned `/var/www`, avoiding any recommendation to make the whole web root
+  writable by the INN user.
+- Expanded built-in comments and operator documentation for status, metrics,
+  debug outputs, default paths, permissions, and the disclosure risk of serving
+  the legacy text statistics file publicly.
+- Fixed first-use debug rotation checking an absent batch file and added error
+  reporting when a batch rotation rename fails.
+
 - Added an early Perl-version bootstrap guard. If the interpreter embedded in
   `innd` is older than Perl 5.38, cleanfeed-ng now emits an explicit fatal
   diagnostic (using INN syslog when available, with a direct `news.err`
