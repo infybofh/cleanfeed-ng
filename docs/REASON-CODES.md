@@ -25,7 +25,6 @@ Automation should use the rule name or `CF-*` code, not the explanatory text. He
 | `path.repeated_token` | `CF-PATH-REPEATED-TOKEN` | One Path component repeats too often. |
 | `anomaly.peer_rate` | `CF-PEER-RATE-ANOMALY` | Peer exceeds the audit rate threshold. |
 | `anomaly.host_rate` | `CF-HOST-RATE-ANOMALY` | Posting host exceeds the audit rate threshold. |
-
 | `header.invalid` | `CF-HEADER-INVALID` | Malformed or invalid mandatory header. |
 | `site.path` | `CF-BAD-PATH` | Path matched a configured bad-site/path rule. |
 | `site.host` | `CF-BAD-HOST` | Posting/injection host matched a deny rule. |
