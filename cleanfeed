@@ -138,6 +138,7 @@ $Study_Max_Lines_Configured = 0;
 $Local_Config_Loaded = 0;
 $Runtime_Banner_Logged = 0;
 $MID_History_Reinit_Logged = 0;
+$INN_Dontrejectfiltered = 'unknown';
 %Prepared_Output_Directory = ();
 %Output_Path_Warning_Logged = ();
 
@@ -705,6 +706,7 @@ $Cleanfeed_Bootstrap_Error_Logged = 0;
 my $cleanfeed_initialization_ok = eval {
     get_config();
     setup_stuff();
+    $INN_Dontrejectfiltered = detect_inn_dontrejectfiltered();
 
     # is this a reload?
     if (defined $Start_Time) {
@@ -1151,6 +1153,25 @@ sub log_bootstrap_failure_once {
     return;
 }
 
+# Read INN's effective dontrejectfiltered setting once per filter load.  The
+# standard INN::Config module obtains the live inn.conf values through
+# innconfval.  Detection is deliberately outside filter_art(), so no process is
+# spawned in the recurring article hot path.  Older/non-INN test environments
+# simply report an unknown state.
+sub detect_inn_dontrejectfiltered {
+    my $value;
+    my $loaded = eval {
+        require INN::Config;
+        no strict 'refs';
+        $value = ${'INN::Config::dontrejectfiltered'};
+        1;
+    };
+    return 'unknown' if not $loaded or not defined $value;
+    return 1 if $value =~ /^(?:1|true|yes|on)$/i;
+    return 0 if $value =~ /^(?:0|false|no|off)$/i;
+    return $value ? 1 : 0;
+}
+
 # Log the effective runtime state once after every initial load or reload, at
 # the first article where INN::syslog is known to be available.  This is outside
 # the recurring hot path after the first boolean check has succeeded.
@@ -1176,7 +1197,15 @@ sub log_runtime_banner {
         . ' policy_log_matches=' . (defined $config{policy_log_matches} ? $config{policy_log_matches} : 'undef')
         . ' policy_log_accepts=' . (defined $config{policy_log_accepts} ? $config{policy_log_accepts} : 'undef')
         . ' block_all_binaries=' . (defined $config{block_all_binaries} ? $config{block_all_binaries} : 'undef')
-        . ' allow_binary=' . (defined $config{policy_default_allow_binary} ? $config{policy_default_allow_binary} : 'undef'));
+        . ' allow_binary=' . (defined $config{policy_default_allow_binary} ? $config{policy_default_allow_binary} : 'undef')
+        . ' dontrejectfiltered=' . $INN_Dontrejectfiltered);
+
+    if ($INN_Dontrejectfiltered eq '1') {
+        slog('W', 'WARNING dontrejectfiltered=true; INN will accept articles '
+            . 'returned as rejected by cleanfeed-ng and may store them locally. '
+            . 'Set dontrejectfiltered: false in inn.conf when filter verdicts '
+            . 'must be effective');
+    }
 
     if ($Study_Max_Lines_Configured) {
         slog('N', 'Deprecated option study_max_lines is ignored; study() is a '
@@ -1310,6 +1339,15 @@ sub filter_art {
     # Run this before the newer binary guards and policy engine so the original
     # semantics are not accidentally overridden.
     if (article_is_fully_excluded(\@grpfup)) {
+        # This branch is an accepted decision, not an unaccounted bypass.  Keep
+        # the accepted/timer metrics consistent with the normal end of
+        # filter_art(), while preserving the historical no-check semantics.
+        $status{accepted}++;
+        policy_count('accepted', $state{peer}, $groups[0])
+            if $config{metrics_enabled};
+        policy_log_event('accept', 'accepted', '')
+            if $config{policy_log_accepts};
+        $timer{accepted}++ if $config{timer_info};
         trimhashes() if $now - $Last_Trim >= $config{trim_interval};
         writestats() if $now - $Last_Stats >= $config{stats_interval};
         return '';
@@ -1597,7 +1635,8 @@ sub filter_art {
                     if ($config{image_extensions}
                     and defined $state{file_extension}
                     and $state{file_extension} =~ /$config{image_extensions}/) {
-                        return reject("Binary Image: misplaced $state{file_extension}")
+                        return reject("Binary Image: misplaced $state{file_extension}",
+                            undef, 'binary.image')
                         if not $gr{image};
                         # gr{image} is true when distro matches bin_allowed
                         # or image_allowed
@@ -2547,6 +2586,7 @@ sub reject_code {
     my %codes = (
         'binary.yenc'=>'CF-BINARY-YENC','binary.uuencode'=>'CF-BINARY-UUENCODE',
         'binary.base64'=>'CF-BINARY-BASE64','binary.mime'=>'CF-BINARY-MIME',
+        'binary.image'=>'CF-BINARY-IMAGE',
         'binary.byte_profile'=>'CF-BINARY-BYTE-PROFILE','policy.binary'=>'CF-POLICY-BINARY',
         'policy.size'=>'CF-POLICY-SIZE','crosspost'=>'CF-CROSSPOST',
         'mime.multipart.boundary_missing'=>'CF-MIME-BOUNDARY-MISSING',
@@ -3267,6 +3307,7 @@ sub policy_reason_key {
     return 'binary.uuencode' if $reason =~ /uuenc/;
     return 'binary.base64' if $reason =~ /base64/;
     return 'binary.byte_profile' if $reason =~ /nonprintable|byte profile/;
+    return 'binary.image' if $reason =~ /binary image|misplaced (?:jpe?g|gif|png|ico)/;
     return 'binary.mime' if $reason =~ /mime|binary payload|misplaced binary/;
     return 'header.subject' if $reason =~ /subject/;
     return 'body.url' if $reason =~ /url/;
@@ -3548,6 +3589,7 @@ sub metric_snapshot_lines {
     push @lines, "generated_epoch=$report_now";
     push @lines, "started_epoch=$started";
     push @lines, "uptime_seconds=$uptime";
+    push @lines, "inn_dontrejectfiltered=$INN_Dontrejectfiltered";
     for my $key (qw(articles accepted rejected refused audited quarantined)) {
         push @lines, "$key=" . ($status{$key} || 0);
     }
@@ -3731,6 +3773,8 @@ HTML_HEAD
         . '; uptime ' . html_escape($uptime) . " seconds.</p>\n";
     $html .= '<p class="warn"><strong>Warning:</strong> cleanfeed.local failed to load; built-in or previous valid settings are in use.</p>'
         if $Local_Conf_Err;
+    $html .= '<p class="warn"><strong>Warning:</strong> INN has dontrejectfiltered enabled. Rejected filter verdicts are accepted locally and may be stored.</p>'
+        if $INN_Dontrejectfiltered eq '1';
 
     $html .= '<h2>Article decisions</h2><div class="grid">';
     for my $key (qw(articles accepted rejected refused audited quarantined)) {
@@ -3836,7 +3880,8 @@ sub writestats {
         if $version and $version_date;
     print FILE 'Filter started: ' . scalar(localtime $started) . "\n"
     . 'Report generated: ' . scalar(localtime $report_now) . "\n"
-    . 'Uptime: ' . $uptime . " seconds\n\n"
+    . 'Uptime: ' . $uptime . " seconds\n"
+    . 'INN dontrejectfiltered: ' . $INN_Dontrejectfiltered . "\n\n"
     . "Accepted: $status{accepted}\nRejected: $status{rejected}\n";
     print FILE "Refused: $status{refused}\n" if $config{do_mid_filter};
     print FILE "MD5 entries: $md5hashentries\n"
@@ -3852,6 +3897,8 @@ sub writestats {
 
     print FILE "\ncleanfeed.local NOT loaded! Check file permissions.\n"
         if $Local_Conf_Err;
+    print FILE "\nWARNING: INN dontrejectfiltered is enabled; filter rejects are accepted locally and may be stored.\n"
+        if $INN_Dontrejectfiltered eq '1';
 
     print FILE "\nSupersedes entries: $superentries\n";
     if ($Suphistory) {

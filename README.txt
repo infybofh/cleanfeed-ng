@@ -180,6 +180,39 @@ interpreter, the initialization guard makes that stale function fail open,
 logs the bootstrap error once, and prevents access to undefined configuration
 or history objects.
 
+EFFECTIVE REJECTION AND INN DONTREJECTFILTERED
+----------------------------------------------
+A non-empty value returned by filter_art() is a cleanfeed-ng rejection verdict,
+but INN controls the final local disposition. If inn.conf contains:
+
+  dontrejectfiltered: true
+
+INN accepts articles rejected by its Perl or Python filter and may store them
+locally, optionally in a storage class marked "filtered". This is useful for
+quarantine or analysis installations, but it is incompatible with a server
+whose filter verdicts must categorically prevent local storage.
+
+cleanfeed-ng reads the effective setting once during initialization, outside the
+recurring article hot path. The runtime banner reports:
+
+  dontrejectfiltered=0|1|unknown
+
+When the value is 1, cleanfeed-ng emits a one-time warning in the INN news log
+and repeats it in the HTML and legacy text reports. The key=value metrics file
+also contains:
+
+  inn_dontrejectfiltered=0|1|unknown
+
+For effective rejection, use:
+
+  dontrejectfiltered: false
+
+Changes to inn.conf require an innd restart or "ctlinnd xexec innd". A
+"ctlinnd reload filter.perl" command does not apply them. When
+"dontrejectfiltered: true" is active, the cleanfeed-ng "rejected" counters are
+filter verdicts and do not necessarily represent articles discarded from local
+history, overview or storage.
+
 INSTALLATION
 ------------
 1. Locate the currently loaded INN Perl filter. Common paths include:

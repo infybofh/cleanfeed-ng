@@ -17,6 +17,10 @@ BEGIN {
     sub cancel    { return 1 }
     sub filesfor  { return '' }
     sub head      { return '' }
+
+    package INN::Config;
+    our $dontrejectfiltered = 0;
+    $INC{'INN/Config.pm'} = __FILE__;
 }
 
 package main;
@@ -24,7 +28,8 @@ our (@Captured_Syslog, %hdr, %state, %config, %Peer_Policies,
      %Hierarchy_Policies, %policy_rule_count, %policy_peer_count,
      %policy_hierarchy_count, @groups, @followups, %status, %timer,
      $MIDhistory, $MID_History_Reinit_Logged, $Runtime_Banner_Logged,
-     $Study_Max_Lines_Configured, $Local_Config_Loaded, $Local_Conf_Err,
+     $INN_Dontrejectfiltered, $Study_Max_Lines_Configured,
+     $Local_Config_Loaded, $Local_Conf_Err,
      $Last_Trim, $Last_Stats, $Last_Bad_Mtime_Check, $Last_Metrics_CSV,
      $Do_Log, $now, $Start_Time, $Cleanfeed_Bootstrap_OK,
      $Cleanfeed_Bootstrap_Error, $Cleanfeed_Bootstrap_Error_Logged,
@@ -56,10 +61,14 @@ $Runtime_Banner_Logged = 0;
 $Study_Max_Lines_Configured = 1;
 $Local_Config_Loaded = 1;
 $Local_Conf_Err = 0;
+$INN::Config::dontrejectfiltered = 1;
+$INN_Dontrejectfiltered = detect_inn_dontrejectfiltered();
 log_runtime_banner();
 log_runtime_banner();
 my @runtime = grep { $_->[1] =~ /^cleanfeed-ng runtime\b/ } @Captured_Syslog;
 my @deprecated = grep { $_->[1] =~ /^Deprecated option study_max_lines\b/ }
+    @Captured_Syslog;
+my @dontreject_warning = grep { $_->[1] =~ /WARNING dontrejectfiltered=true/ }
     @Captured_Syslog;
 is(scalar @runtime, 1, 'runtime banner is logged once');
 is(scalar @deprecated, 1, 'study_max_lines warning is deferred and logged once');
@@ -67,11 +76,17 @@ like($runtime[0][1], qr/\bperl=v?5\./,
     'runtime banner reports the interpreter version used by the filter');
 like($runtime[0][1], qr/\binitialization=ok\b/,
     'runtime banner confirms completed initialization');
+like($runtime[0][1], qr/\bdontrejectfiltered=1\b/,
+    'runtime banner exposes effective INN dontrejectfiltered state');
+is(scalar @dontreject_warning, 1,
+    'enabled dontrejectfiltered produces one explicit warning per load');
 ok(-f $config{statfile}, 'runtime preparation creates legacy statistics file');
 ok(-f $config{html_statfile}, 'runtime preparation creates HTML statistics file');
 ok(-f $config{metrics_status_file}, 'runtime preparation creates metrics status file');
 ok(-f $config{metrics_csv_file}, 'runtime preparation creates metrics CSV file');
 ok(-d $config{debug_batch_directory}, 'runtime preparation creates debug batch directory');
+$INN::Config::dontrejectfiltered = 0;
+$INN_Dontrejectfiltered = detect_inn_dontrejectfiltered();
 
 # A broken configured path must produce one actionable complaint, not one line
 # per article or per periodic statistics run.
@@ -191,6 +206,8 @@ ensure_mid_history();
         'metrics snapshot contains a numeric generated_epoch');
     like($status_text, qr/^uptime_seconds=\d+$/m,
         'metrics snapshot contains a non-negative uptime');
+    like($status_text, qr/^inn_dontrejectfiltered=0$/m,
+        'metrics snapshot exposes effective dontrejectfiltered state');
     unlike($status_text, qr/^uptime_seconds=-/m,
         'metrics snapshot never reports a negative uptime');
 
@@ -213,6 +230,11 @@ ensure_mid_history();
     ok(eval { checkrotate("$output_tmp/spool/cleanfeed/not-yet-created"); 1 },
         'debug rotation tolerates a batch file that does not yet exist');
 }
+
+is(policy_reason_key('Binary Image: misplaced jpg'), 'binary.image',
+    'legacy binary-image prose maps to the stable binary.image rule');
+is(reject_code('binary.image'), 'CF-BINARY-IMAGE',
+    'binary.image has a dedicated stable rejection code');
 
 # Configure a deterministic policy test.  All new lightweight guards are off so
 # the result demonstrates allexclude ordering and policy logging only.
@@ -269,8 +291,14 @@ sub test_article_headers {
 }
 
 @Captured_Syslog = ();
+my $accepted_before_exclude = $status{accepted} || 0;
+my $articles_before_exclude = $status{articles} || 0;
 %hdr = test_article_headers('linux.debian.changes.devel', '<linux-only@example>');
 is(filter_art(), '', 'linux-only binary-looking article preserves historical allexclude bypass');
+is($status{accepted}, $accepted_before_exclude + 1,
+    'fully excluded article is counted as accepted');
+is($status{articles}, $articles_before_exclude + 1,
+    'fully excluded article remains counted in total articles');
 is(scalar grep({ $_->[1] =~ /^cleanfeed_event action=reject\b/ }
         @Captured_Syslog), 0, 'fully excluded hierarchy emits no reject event');
 

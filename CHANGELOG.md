@@ -2,6 +2,23 @@
 
 ## 2026.07.3-rc2 - Development/testing tree
 
+- Added explicit detection of INN's effective `dontrejectfiltered` setting at
+  filter initialization.  The one-time runtime banner and key=value metrics now
+  expose the value, and a warning is emitted when INN is configured to accept
+  and possibly store articles that cleanfeed-ng returns as rejected.
+- Clarified in the operator documentation that the `rejected` counters represent
+  cleanfeed-ng verdicts; with `dontrejectfiltered: true`, they are not guaranteed
+  to be effective local discards.
+- Fixed historical `allexclude` bypasses not incrementing the accepted and timer
+  counters.  Fully excluded `linux.*`, `mailing.*`, and locally configured
+  hierarchies are still left uninspected, but are now accounted for as accepted.
+- Added the stable `binary.image` rule and `CF-BINARY-IMAGE` rejection code for
+  misplaced JPEG/GIF/PNG/ICO payloads instead of classifying them as
+  `rule=other` / `CF-OTHER`.
+- Added regression tests for effective-INN-setting reporting, the
+  `dontrejectfiltered` warning, excluded-article accounting, and binary-image
+  reason-code classification.
+
 - Fixed statistics generation during filter reload before the next article.
   Report functions now use a local report timestamp instead of the article-path
   global `$now`, preventing empty `generated_epoch` values and negative uptime.

@@ -156,6 +156,43 @@ libperl already embedded in a running `innd`. After changing Perl alternatives,
 packages, or libperl, use a full INN restart rather than only
 `ctlinnd reload filter.perl`.
 
+## Effective rejection and INN `dontrejectfiltered`
+
+A non-empty value returned by `filter_art()` is a cleanfeed-ng rejection
+**verdict**, but INN controls the final local disposition.  When `inn.conf`
+contains:
+
+```text
+dontrejectfiltered: true
+```
+
+INN accepts articles rejected by its Perl or Python filter and may store them
+locally, optionally in a storage class marked `filtered`.  This is useful for
+quarantine or analysis installations, but it is incompatible with a server
+whose filter verdicts must categorically prevent local storage.
+
+cleanfeed-ng reads the effective setting once during initialization, outside the
+recurring article path.  The runtime banner includes:
+
+```text
+dontrejectfiltered=0|1|unknown
+```
+
+When it detects `1`, it emits a one-time warning to the INN news log and repeats
+the warning in the HTML and legacy text reports.  The key/value metrics snapshot
+also contains `inn_dontrejectfiltered=`.
+
+For effective rejection, set:
+
+```text
+dontrejectfiltered: false
+```
+
+Changes to `inn.conf` require an `innd` restart or `ctlinnd xexec innd`; a Perl
+filter reload alone does not apply them.  When `dontrejectfiltered` is enabled,
+cleanfeed-ng's `rejected` metrics count filter verdicts, not necessarily
+articles discarded from local history, overview, or storage.
+
 ## Default reports, metrics, and debug paths
 
 The RC2 defaults enable the lightweight reports and use these locations:

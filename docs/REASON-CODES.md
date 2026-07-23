@@ -15,6 +15,7 @@ Automation should use the rule name or `CF-*` code, not the explanatory text. He
 | `yenc.structure.invalid_part_number` | `CF-YENC-INVALID-PART-NUMBER` | Invalid `part` or `part > total`. |
 | `yenc.metadata.single_size` | `CF-YENC-SINGLE-SIZE` | Comparable single-part begin/end sizes differ beyond tolerance. |
 | `yenc.metadata.part_size` | `CF-YENC-PART-SIZE` | Multipart `=yend size` differs from the `=ypart` range beyond tolerance. |
+| `binary.image` | `CF-BINARY-IMAGE` | Image payload is misplaced outside an allowed binary/image distribution. |
 | `binary.byte_profile` | `CF-BINARY-BYTE-PROFILE` | Bounded sample has an unusually high non-printable-byte ratio. |
 | `structure.header_line` | `CF-HEADER-LINE-LONG` | Header line exceeds the configured limit. |
 | `structure.body_line` | `CF-BODY-LINE-LONG` | Body line exceeds the configured limit. |
@@ -24,6 +25,7 @@ Automation should use the rule name or `CF-*` code, not the explanatory text. He
 | `path.repeated_token` | `CF-PATH-REPEATED-TOKEN` | One Path component repeats too often. |
 | `anomaly.peer_rate` | `CF-PEER-RATE-ANOMALY` | Peer exceeds the audit rate threshold. |
 | `anomaly.host_rate` | `CF-HOST-RATE-ANOMALY` | Posting host exceeds the audit rate threshold. |
+
 | `header.invalid` | `CF-HEADER-INVALID` | Malformed or invalid mandatory header. |
 | `site.path` | `CF-BAD-PATH` | Path matched a configured bad-site/path rule. |
 | `site.host` | `CF-BAD-HOST` | Posting/injection host matched a deny rule. |
