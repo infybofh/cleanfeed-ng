@@ -1,0 +1,178 @@
+# vim: set tabstop=4 shiftwidth=4 expandtab syntax=perl:
+#
+# Companion Cleanfeed-NG local hook examples distributed with Postfilter-NG.
+# Copy only reviewed sections into the site's cleanfeed.local.
+
+# 1 saves matching articles and lets them pass.  Set to 0 only after reviewing
+# representative samples from every enabled rule.
+my $CFNG_LOCAL_AUDIT_ONLY = 1;
+
+# Rule-family switches.  Start with one family at a time on a live server.
+my $CFNG_ENABLE_FORGED_APPROVAL = 1;
+my $CFNG_ENABLE_ASPNNTP_HISTORY = 1;
+my $CFNG_ENABLE_GOOGLE_WHOLESALE_HISTORY = 1;
+my $CFNG_ENABLE_MI5_HISTORY = 1;
+my $CFNG_ENABLE_JOB_URL_FLOOD = 1;
+my $CFNG_ENABLE_REPOST_WATCH = 1;
+
+# Historical AspNNTP campaign labels from Steve Crook's published sample.
+my %CFNG_BAD_ASPNNTP = map { $_ => 1 } (
+    'PostIT Now',
+    'Jobsearch Limited',
+    'AudioWeb',
+    'Alex',
+    'Paul Simmons',
+    'Alan',
+    'Digital Media Works',
+    'Captive Technology',
+    'Computer Horzions ISG',
+    'Mike Powers',
+);
+
+# Store one match and either pass or reject according to the audit switch.
+sub cfng_local_match {
+    my ($bucket, $reason) = @_;
+
+    saveart($bucket, $reason);
+    return '' if $CFNG_LOCAL_AUDIT_ONLY;
+    return reject($reason);
+}
+
+sub local_filter_first {
+    # Historical forged-approval protection for locally injected articles.
+    if ($CFNG_ENABLE_FORGED_APPROVAL && $localfeed && $hdr{Approved}) {
+        for my $group (@groups) {
+            next if $group =~ /^(?:alt|news\.admin\.net-abuse)\./;
+            return cfng_local_match(
+                'local.forged-approved',
+                "Forged approval in $group ($hdr{Approved})",
+            );
+        }
+    }
+
+    # Adapted historical Google Groups wholesale-goods campaign check.  It is
+    # intentionally conjunctive: a new thread, Google posting trace and one of
+    # the old campaign-style subjects must all be present.
+    if (
+        $CFNG_ENABLE_GOOGLE_WHOLESALE_HISTORY
+        && !$hdr{References}
+        && ($hdr{'X-Trace'} // '') =~ /posting\.google\.com/i
+        && ($hdr{Subject} // '') =~ /
+            cheap.*wholesale
+            | wholesale.*cheap
+            | ^\(CN-CIRCLE
+            | china.*(?:shoes|sandals|sneakers|clothes|bags|jeans|caps|watch)
+            | shoes.*(?:gucci|parda|chanel|puma|hogan|bape|armani|ugg|ice|versace)
+        /imx
+    ) {
+        return cfng_local_match(
+            'history.google-wholesale',
+            'Historical Google wholesale-goods signature',
+        );
+    }
+
+    return '';
+}
+
+sub local_filter_bot {
+    # Historical AspNNTP client/campaign signatures.  The value in parentheses
+    # is compared with the complete known-campaign table above.
+    if (
+        $CFNG_ENABLE_ASPNNTP_HISTORY
+        && ($hdr{'X-Newsreader'} // '') =~ /^AspNNTP\s+\S+\s+\((.*)\)/
+        && exists $CFNG_BAD_ASPNNTP{$1}
+    ) {
+        return cfng_local_match(
+            'history.aspnntp',
+            "Historical AspNNTP campaign: $1",
+        );
+    }
+
+    return '';
+}
+
+sub local_filter_last {
+    # Historical MI5 flood: medium-sized new threads, heavily crossposted and
+    # with matching Followup-To breadth.  This is adapted from Steve's sample.
+    if (
+        $CFNG_ENABLE_MI5_HISTORY
+        && !$hdr{References}
+        && ($hdr{__LINES__} // 0) > 25
+        && ($hdr{__LINES__} // 0) < 150
+        && scalar(@groups) > 4
+        && scalar(@followups) > 4
+        && (
+            ($hdr{__BODY__} // '') =~ /\bMI5\b/i
+            || ($hdr{Subject} // '') =~ /M.{1,3}I.{1,3}5/i
+        )
+    ) {
+        return cfng_local_match(
+            'history.mi5',
+            'Historical MI5 crosspost-flood signature',
+        );
+    }
+
+    # New composite example: recruitment/job subject, several external URLs,
+    # messaging-app contact and broad crossposting.  Every condition is needed;
+    # a single job advert or a normal signature URL is not enough.
+    if (
+        $CFNG_ENABLE_JOB_URL_FLOOD
+        && !$hdr{References}
+        && scalar(@groups) >= 4
+        && ($hdr{__LINES__} // 0) >= 8
+        && ($hdr{__LINES__} // 0) <= 180
+        && ($hdr{Subject} // '') =~ /
+            \b(?:job|jobs|hiring|recruitment|work[ -]?from[ -]?home|remote[ -]?work)\b
+        /ix
+    ) {
+        my $body = $hdr{__BODY__} // '';
+        my $url_count = () = $body =~ m{https?://}ig;
+        if (
+            $url_count >= 3
+            && $body =~ /\b(?:telegram|whats?app)\b/i
+        ) {
+            return cfng_local_match(
+                'local.job-url-flood',
+                'Multi-group recruitment post with URL and messaging-app flood signature',
+            );
+        }
+    }
+
+    # Steve's resurrector example was save-only.  Keep it save-only even when
+    # the other examples are switched from audit to reject.
+    if (
+        $CFNG_ENABLE_REPOST_WATCH
+        && ($hdr{Subject} // '') =~ /^REPOST:\s/i
+        && ($hdr{Path} // '') =~ /!resurrector!/
+    ) {
+        saveart('watch.repost-resurrector', 'Resurrector repost observed');
+    }
+
+    return '';
+}
+
+sub local_filter_reject {
+    my ($verbose_reason, $short_reason) = @_;
+
+    # Concrete diagnostic buckets make later archive review easier.
+    saveart('reject.emp-md5', $verbose_reason)
+        if ($verbose_reason // '') =~ /^EMP\s*\(md5/i;
+    saveart('reject.emp-phn', $verbose_reason)
+        if ($verbose_reason // '') =~ /^EMP\s*\(phn/i;
+    saveart('reject.emp-phr', $verbose_reason)
+        if ($verbose_reason // '') =~ /^EMP\s*\(phr/i;
+    saveart('reject.emp-phl', $verbose_reason)
+        if ($verbose_reason // '') =~ /^EMP\s*\(phl/i;
+    saveart('reject.emp-fsl', $verbose_reason)
+        if ($verbose_reason // '') =~ /^EMP\s*\(fsl/i;
+    saveart('reject.bad-host', $verbose_reason)
+        if ($verbose_reason // '') =~ /^Bad\s+host/i;
+    saveart('reject.uuencode', $verbose_reason)
+        if ($verbose_reason // '') =~ /^UUencoded/i;
+    saveart('reject.binary', $verbose_reason)
+        if ($verbose_reason // '') =~ /^Binary/i;
+
+    return @_;
+}
+
+1;
