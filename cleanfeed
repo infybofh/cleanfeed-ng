@@ -94,7 +94,7 @@ $MODE ||= 'inn';
 
 # cleanfeed-ng release version (YYYY.MM.VV with an optional -alN, -beN or
 # -rcN development suffix).
-$cleanfeed_ng_version = '2026.07.3-rc2';
+$cleanfeed_ng_version = '2026.07.3-rc3';
 # Backward-compatible internal alias used by metrics and fingerprints.
 $cleanfeed_maintenance_version = $cleanfeed_ng_version;
 
@@ -190,7 +190,8 @@ sub get_config {
     stats_interval => 3600,     # write status file every N seconds
     MIDmaxlife => 4,            # time to keep rejected message-ids, in hours
     md5_skips_followups => 1,   # avoid MD5 check on articles with References?
-    phn_aggressive => 1,        # use path for phn filter when no posting host
+    phn_aggressive => 0,        # legacy reject on shared-injector fallback; unsafe on public servers
+    phn_weak_identity_mode => 1, # audit shared-injector fallback when no per-poster identity exists
     phr_aggressive => 1,        # use path for phr filter when no posting host
     do_mid_filter => 1,         # use the message-id CHECK filter? (INN only)
     do_supersedes_filter => 1,  # do the excessive supersedes filter?
@@ -440,10 +441,10 @@ sub get_config {
         '|\.marketplace|\.ebay|\.forsale|^relcom\.hot-news|^szn\.news\.'.
         '|^comp\.lang\.python',
 
-    # These hosts create unlinkable Posting-Host headers, rendering them
-    # useless for hashing purposes.  In these instances the NPH and PHR filter
-    # will use the Path header instead, (if phn_aggressive is true).  The PHL
-    # filter will ignore posts from these hosts.
+    # These injectors create unlinkable Posting-Host values.  PHN will not
+    # treat host metadata from them as a strong identity; it tries account and
+    # Path .POSTED source metadata before the configured weak fallback.  PHL
+    # and PHR preserve their historical treatment of these hosts.
     bad_nph_hosts => 'newsguy\.com|tornevall\.net',
     
     ### Exempt these hosts from the Posting-Host / Lines filter
@@ -451,7 +452,7 @@ sub get_config {
         '|^freebsd\.csie\.nctu\.edu\.tw$|^ddt\.demos\.su$|^onlyNews customer$'.
         '|localhost\.pld-linux\.org',
 
-    ### Exempt these hosts from the Posting-Host / Newsgroup filter
+    ### Exempt matching PHN poster identities or injector hosts
     phn_exempt => '^localhost$|^127\.0\.0\.1$|localhost\.pld-linux\.org',
 
     ### Exempt these hosts from the High-Risk Newsgroups filter
@@ -763,7 +764,7 @@ sub validate_configuration {
         verbose aggressive block_binaries block_all_binaries block_late_cancels
         block_user_spamcancels block_user_cancels block_extra_reposts do_md5
         do_phl do_phn do_phr do_fsl do_scoring_filter do_ratio_scoring
-        do_emp_dump fuzzy_md5 md5_skips_followups phn_aggressive phr_aggressive
+        do_emp_dump fuzzy_md5 md5_skips_followups phn_aggressive phn_weak_identity_mode phr_aggressive
         do_mid_filter do_supersedes_filter drop_useless_controls drop_ihave_sendme
         binaries_in_mod_groups block_mime_html block_html_multipart block_html
         block_html_images log_accepts inn_syslog_status timer_info
@@ -1198,6 +1199,8 @@ sub log_runtime_banner {
         . ' policy_log_accepts=' . (defined $config{policy_log_accepts} ? $config{policy_log_accepts} : 'undef')
         . ' block_all_binaries=' . (defined $config{block_all_binaries} ? $config{block_all_binaries} : 'undef')
         . ' allow_binary=' . (defined $config{policy_default_allow_binary} ? $config{policy_default_allow_binary} : 'undef')
+        . ' phn_aggressive=' . (defined $config{phn_aggressive} ? $config{phn_aggressive} : 'undef')
+        . ' phn_weak_identity_mode=' . (defined $config{phn_weak_identity_mode} ? $config{phn_weak_identity_mode} : 'undef')
         . ' dontrejectfiltered=' . $INN_Dontrejectfiltered);
 
     if ($INN_Dontrejectfiltered eq '1') {
@@ -1205,6 +1208,12 @@ sub log_runtime_banner {
             . 'returned as rejected by cleanfeed-ng and may store them locally. '
             . 'Set dontrejectfiltered: false in inn.conf when filter verdicts '
             . 'must be effective');
+    }
+
+    if ($config{phn_aggressive}) {
+        slog('W', 'WARNING phn_aggressive=1 enables legacy PHN rejection using '
+            . 'a shared injector/newsgroups counter when no per-poster identity '
+            . 'is available; public news services may aggregate unrelated users');
     }
 
     if ($Study_Max_Lines_Configured) {
@@ -1240,7 +1249,10 @@ sub filter_art {
     # urlcount;         Int:    Number of URL's in an article
     # charset;          Str:    Article charset (if defined in Content-Type)
     # posting_host:     Str:    Posting host/address
+    # posting_host_source Str:  injection_posting_host or nntp_posting_host
+    # posting_account:  Str:    Opaque Injection-Info posting-account value
     # injection_host    Str:    Injection host
+    # phn_identity_*:   Str/Int: PHN source, strength, raw-value-free hash and count
     # grpcnt:           Int:    Count of groups in Newsgroups header
     # fupcnt            Int:    Count of groups in Followup-To header
     # grpfupcnt:        Int:    Count of combined grpcnt and fupcnt (Unique)
@@ -1283,16 +1295,11 @@ sub filter_art {
         $state{injection_host} = first_path_host($hdr{Path});
     };
 
-    # Try and ascertain the Posting-Host info
-    if ($hdr{'Injection-Info'} =~ /posting-host$hws*=$hws*"?([^";]+)/) {
-        $state{posting_host} = "$1";
-    } elsif ($hdr{'NNTP-Posting-Host'}) {
-        $state{posting_host} = $hdr{'NNTP-Posting-Host'};
-    } else {
-        $state{posting_host} = 0;
-    };
-    $state{posting_host} = normalize_domain($state{posting_host}) if $state{posting_host};
-    $state{injection_host} = normalize_domain($state{injection_host}) if $state{injection_host};
+    # Extract the strongest available per-poster metadata.  Injection-Info
+    # posting-account is intentionally kept separate from posting_host: it is
+    # an opaque account identifier, not a hostname.  PHN uses the source type
+    # to keep unrelated users of a public injector in separate histories.
+    populate_posting_identity_state();
 
     # Provide a user-defined function for tagging posts that are fed from
     # sources the operator considers local.  Note: This includes, but is
@@ -1800,20 +1807,17 @@ sub filter_art {
                         if $PHLhistory->add("$state{posting_host} $state{lines}");
             }; # End of PHL filter
 
-            # create posting-host/newsgroups hash
+            # Create a per-poster/newsgroups PHN hash.  RC3 prefers a
+            # posting-account, an Injection-Info posting-host, a legacy
+            # NNTP-Posting-Host, or a Path .POSTED.<source> token.  Only when
+            # all of those are absent does it use the shared injector fallback.
+            # The weak fallback audits by default and rejects only when the
+            # legacy phn_aggressive switch is explicitly enabled.
             if ($config{do_phn} and not $gr{phrinc} and not $gr{phnskip}
             and not $gr{alltest} and not $gr{allmod}
             and not ($gr{binary} and $state{lines} > 100)) {
-                if ($state{posting_host}
-                and not $state{injection_host} =~ /(?:$config{bad_nph_hosts})/o) {
-                    if (not $state{posting_host} =~ /(?:$config{phn_exempt})/o) {
-                        return reject('EMP posting-host/newsgroups threshold exceeded', 'EMP (phn)', 'emp.phn')
-                            if $PHNhistory->add("$state{posting_host} $sortgrps");
-                    };
-                } elsif ($config{phn_aggressive}) {
-                    return reject('EMP Path/newsgroups threshold exceeded', 'EMP (phn)', 'emp.phn')
-                        if $PHNhistory->add("$state{injection_host} $sortgrps");
-                }; # End of aggressive mode
+                my $phn_result = apply_phn_filter($sortgrps);
+                return $phn_result if defined $phn_result and $phn_result ne '';
             }; # End of PHN filter
 
             # create from/subject/lines hash
@@ -2523,6 +2527,195 @@ sub first_path_host{
     s/.*!//; # Strip all but RH path entry
     return $_;
 };
+
+# Populate the legacy posting_host state and the RC3 PHN-specific account/source
+# metadata from the current article headers.  Keeping this in one helper makes
+# the exact production extraction path directly regression-testable.
+sub populate_posting_identity_state {
+    $state{posting_account} = injection_info_parameter('posting-account');
+    my $injection_posting_host = injection_info_parameter('posting-host');
+    if ($injection_posting_host) {
+        $state{posting_host} = $injection_posting_host;
+        $state{posting_host_source} = 'injection_posting_host';
+    } elsif ($hdr{'NNTP-Posting-Host'}) {
+        $state{posting_host} = safe_identity_value($hdr{'NNTP-Posting-Host'});
+        $state{posting_host_source} = 'nntp_posting_host';
+    } else {
+        $state{posting_host} = 0;
+        $state{posting_host_source} = '';
+    }
+    $state{posting_host} = normalize_domain($state{posting_host})
+        if $state{posting_host};
+    $state{injection_host} = normalize_domain($state{injection_host})
+        if $state{injection_host};
+    return;
+}
+
+# Return one semicolon-delimited Injection-Info parameter.  Quoted values may
+# contain escaped characters; control characters are always discarded before
+# an identity reaches the PHN history or a log line.
+sub injection_info_parameter {
+    my ($name) = @_;
+    return '' unless defined $name and $name =~ /\A[a-z0-9-]+\z/i;
+    my $header = $hdr{'Injection-Info'} || '';
+    return '' if $header eq '';
+    $header =~ s/\r?\n[ \t]+/ /g; # unfold ordinary header continuation lines
+
+    if ($header =~ /(?:^|;)[ \t]*\Q$name\E[ \t]*=[ \t]*"((?:\\.|[^"\\])*)"/i) {
+        my $value = $1;
+        $value =~ s/\\([\\"])/$1/g;
+        return safe_identity_value($value);
+    }
+    if ($header =~ /(?:^|;)[ \t]*\Q$name\E[ \t]*=[ \t]*([^;\s]+)/i) {
+        return safe_identity_value($1);
+    }
+    return '';
+}
+
+sub safe_identity_value {
+    my ($value) = @_;
+    $value = '' unless defined $value;
+    $value =~ s/[\x00-\x1f\x7f]+//g;
+    $value =~ s/^\s+|\s+$//g;
+    return '' if $value eq '';
+    return substr($value, 0, 512);
+}
+
+# RFC-style injectors may encode the source as a Path token such as
+# .POSTED.192.0.2.10.  A bare .POSTED marker carries no per-poster identity and
+# is therefore deliberately ignored here.
+sub path_posted_source {
+    my ($path) = @_;
+    return '' unless defined $path and $path ne '';
+    for my $token (reverse split(/!/, $path)) {
+        next unless $token =~ /^\.POSTED\.(.+)$/i;
+        my $source = safe_identity_value($1);
+        return normalize_domain($source) if $source ne '';
+    }
+    return '';
+}
+
+sub phn_identity_hash {
+    my ($value) = @_;
+    return '' unless defined $value and $value ne '';
+    if (eval { require Digest::SHA; 1 }) {
+        return substr(Digest::SHA::sha256_hex($value), 0, 16);
+    }
+
+    # Digest::SHA is part of the supported Perl baseline, but retain a small
+    # deterministic fallback for unusual embedded builds.  This value is only
+    # a raw-value-free correlation label in logs, never a security token.
+    my $hash = 2166136261;
+    for my $byte (unpack('C*', $value)) {
+        $hash ^= $byte;
+        $hash = ($hash * 16777619) & 0xffffffff;
+    }
+    return sprintf('%08x', $hash);
+}
+
+# Select the strongest PHN identity available for the article.  The returned
+# history key is namespaced by source and injector so values from independent
+# services cannot collide.  posting-account remains case-sensitive because it
+# is an opaque server-defined identifier; host-like values are normalized.
+sub phn_identity_for_article {
+    my $injector = normalize_domain($state{injection_host} || '');
+    my $posting_account = safe_identity_value($state{posting_account});
+    my $bad_host_metadata = ($injector ne ''
+        && $config{bad_nph_hosts}
+        && $injector =~ /(?:$config{bad_nph_hosts})/);
+
+    if ($posting_account ne '' and $injector ne '') {
+        my $key = join("\x1f", 'posting_account', $injector, $posting_account);
+        return ($key, 'posting_account', 'strong', $posting_account, $injector);
+    }
+
+    if ($state{posting_host} and not $bad_host_metadata) {
+        my $host = normalize_domain($state{posting_host});
+        if ($host ne '') {
+            my $source = $state{posting_host_source} || 'posting_host';
+            my $key = join("\x1f", $source, $injector || 'unknown', $host);
+            return ($key, $source, 'strong', $host, $injector);
+        }
+    }
+
+    my $posted_source = path_posted_source($hdr{Path});
+    if ($posted_source ne '') {
+        my $key = join("\x1f", 'path_posted_source', $injector || 'unknown', $posted_source);
+        return ($key, 'path_posted_source', 'strong', $posted_source, $injector);
+    }
+
+    # A shared injector identifies a service, not an individual poster.  It is
+    # useful as an audit signal but is unsafe as a default reject identity.
+    $injector ||= normalize_domain(first_path_host($hdr{Path} || ''));
+    if ($injector ne '') {
+        my $key = join("\x1f", 'shared_injector', $injector);
+        return ($key, 'shared_injector', 'weak', $injector, $injector);
+    }
+
+    return ();
+}
+
+sub phn_identity_is_exempt {
+    my ($identity, $injector) = @_;
+    return 0 unless $config{phn_exempt};
+    return 1 if defined $identity and $identity ne ''
+        and $identity =~ /(?:$config{phn_exempt})/;
+    return 1 if defined $injector and $injector ne ''
+        and $injector =~ /(?:$config{phn_exempt})/;
+    return 0;
+}
+
+sub apply_phn_filter {
+    my ($sortgrps) = @_;
+    return '' unless $PHNhistory;
+
+    delete @state{qw(phn_identity_source phn_identity_strength
+        phn_identity_hash phn_count)};
+
+    my ($identity_key, $source, $strength, $identity, $injector)
+        = phn_identity_for_article();
+    return '' unless $identity_key;
+    return '' if phn_identity_is_exempt($identity, $injector);
+
+    # Weak identities are not even counted when both controls are disabled.
+    return '' if $strength eq 'weak'
+        and not $config{phn_aggressive}
+        and not $config{phn_weak_identity_mode};
+
+    my $history_key = join("\x1e", $identity_key, $sortgrps || '');
+    my $over = $PHNhistory->add($history_key);
+    return '' unless $over;
+
+    # Hashing is intentionally deferred until the threshold is crossed.  PHN
+    # checks every eligible article, while the correlation value is needed only
+    # for an emitted audit/reject event.
+    $state{phn_identity_source} = $source;
+    $state{phn_identity_strength} = $strength;
+    $state{phn_identity_hash} = phn_identity_hash($identity_key);
+    $state{phn_count} = $PHNhistory->value($history_key);
+
+    if ($strength eq 'weak' and not $config{phn_aggressive}) {
+        $status{audited}++;
+        policy_count('emp.phn', $state{peer}, $groups[0])
+            if $config{metrics_enabled};
+        policy_log_event('audit', 'emp.phn',
+            'EMP shared-injector/newsgroups threshold exceeded')
+            if $config{policy_log_matches};
+        return '';
+    }
+
+    my %reason_for = (
+        posting_account => 'EMP posting-account/newsgroups threshold exceeded',
+        injection_posting_host => 'EMP posting-host/newsgroups threshold exceeded',
+        nntp_posting_host => 'EMP posting-host/newsgroups threshold exceeded',
+        posting_host => 'EMP posting-host/newsgroups threshold exceeded',
+        path_posted_source => 'EMP Path .POSTED source/newsgroups threshold exceeded',
+        shared_injector => 'EMP shared-injector/newsgroups threshold exceeded',
+    );
+    my $reason = $reason_for{$source}
+        || 'EMP posting-identity/newsgroups threshold exceeded';
+    return reject($reason, 'EMP (phn)', 'emp.phn');
+}
 
 # Attempt to determine the client software
 sub x_reader {
@@ -3260,7 +3453,7 @@ sub policy_reason_key {
     # valid rejects to be logged as rule=other.
     return 'emp.md5' if $reason =~ /\bmd5\b/;
     return 'emp.phl' if $reason =~ /\bphl\b|posting-host\/line/;
-    return 'emp.phn' if $reason =~ /\bphn\b|(?:posting-host|path)\/newsgroups/;
+    return 'emp.phn' if $reason =~ /\bphn\b|(?:posting-account|posting-host|path|shared-injector)\/newsgroups/;
     return 'emp.phr' if $reason =~ /\bphr\b|posting-host\/references/;
     return 'emp.fsl' if $reason =~ /\bfsl\b|from\/subject\/lines/;
 
@@ -3347,16 +3540,46 @@ sub policy_count {
     }
 }
 
+sub policy_header_value {
+    my ($value) = @_;
+    $value = '' unless defined $value;
+    $value =~ s/[\x00-\x1f\x7f]+//g;
+    $value =~ s/^\s+|\s+$//g;
+    return $value;
+}
+
+sub policy_quoted_value {
+    my ($value, $limit) = @_;
+    $value = '' unless defined $value;
+    $value =~ s/[\r\n\t]+/ /g;
+    $value =~ s/\s+/ /g;
+    $value =~ s/([\\"])/\\$1/g;
+    $value = substr($value, 0, $limit) if $limit and length($value) > $limit;
+    return '"' . $value . '"';
+}
+
 sub policy_log_event {
     my ($action, $rule, $reason) = @_;
     my @parts = ('cleanfeed_event', "action=" . policy_safe_key($action), "rule=" . policy_safe_key($rule));
     push @parts, 'peer=' . policy_safe_key($state{peer}) if $config{policy_include_peer};
-    push @parts, 'groups=' . policy_safe_key(join(',', @groups)) if $config{policy_include_groups};
-    push @parts, 'message_id=' . policy_safe_key($hdr{'Message-ID'}) if $config{policy_include_message_id};
-    my $safe_reason = $reason || '';
-    $safe_reason =~ s/[\r\n\t]+/ /g;
-    $safe_reason =~ s/\s+/ /g;
-    push @parts, 'reason="' . substr($safe_reason, 0, 240) . '"' if $safe_reason ne '';
+    if ($config{policy_include_groups}) {
+        my $group_value = policy_header_value(join(',', @groups));
+        push @parts, 'groups=' . $group_value if $group_value ne '';
+    }
+    if ($config{policy_include_message_id}) {
+        my $message_id = policy_header_value($hdr{'Message-ID'});
+        push @parts, 'message_id=' . $message_id if $message_id ne '';
+    }
+    if (($rule || '') eq 'emp.phn' and $state{phn_identity_source}) {
+        push @parts, 'identity_source=' . policy_safe_key($state{phn_identity_source});
+        push @parts, 'identity_strength=' . policy_safe_key($state{phn_identity_strength} || 'unknown');
+        push @parts, 'identity_hash=' . policy_safe_key($state{phn_identity_hash})
+            if $state{phn_identity_hash};
+        push @parts, 'count=' . int($state{phn_count}) if defined $state{phn_count};
+        push @parts, 'cutoff=' . int($config{PHNRateCutoff}) if defined $config{PHNRateCutoff};
+    }
+    push @parts, 'reason=' . policy_quoted_value($reason, 240)
+        if defined $reason and $reason ne '';
     slog('N', join(' ', @parts));
 }
 
@@ -4356,6 +4579,12 @@ sub trim {
         push @del, $id if $self->{history}->{$id}[0] < 1;
     }
     delete @{$self->{history}}{@del};
+}
+
+sub value {
+    my ($self, $elem) = @_;
+    return 0 unless exists $self->{history}->{$elem};
+    return $self->{history}->{$elem}[0] || 0;
 }
 
 sub count {

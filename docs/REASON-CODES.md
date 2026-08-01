@@ -57,7 +57,7 @@ Automation should use the rule name or `CF-*` code, not the explanatory text. He
 | `tos.violation` | `CF-TOS-VIOLATION` | Site-defined Terms-of-Service rule matched. |
 | `emp.md5` | `CF-EMP-MD5` | Duplicate-body EMP threshold exceeded. |
 | `emp.phl` | `CF-EMP-PHL` | Posting-host/line-count EMP threshold exceeded. |
-| `emp.phn` | `CF-EMP-PHN` | Posting-host or Path/newsgroups EMP threshold exceeded. |
+| `emp.phn` | `CF-EMP-PHN` | Posting identity/newsgroups PHN threshold exceeded; weak shared-injector matches audit by default. |
 | `emp.phr` | `CF-EMP-PHR` | High-risk-group EMP threshold exceeded. |
 | `emp.fsl` | `CF-EMP-FSL` | From/Subject/Lines EMP threshold exceeded. |
 
@@ -74,3 +74,15 @@ For multipart yEnc, `=ybegin size` is the complete original file size. It is **n
 recommended `binary_byte_profile_scope = policy`, it is evaluated only when the
 effective policy has `allow_binary = 0`. The `all` scope is intentionally noisy
 and should normally be used only with audit mode.
+
+
+## PHN structured-event fields
+
+Starting with `2026.07.3-rc3`, `emp.phn` events add:
+
+- `identity_source`: `posting_account`, `injection_posting_host`, `nntp_posting_host`, `path_posted_source`, or `shared_injector`;
+- `identity_strength`: `strong` or `weak`;
+- `identity_hash`: a raw-value-free correlation prefix, not the raw identity;
+- `count` and `cutoff`: the current PHN counter and configured rejection threshold.
+
+A weak `shared_injector` event is an audit under the shipped defaults. `phn_aggressive => 1` restores legacy rejection and should be used only when the injector is known to represent one posting source.

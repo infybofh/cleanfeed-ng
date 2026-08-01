@@ -2,11 +2,11 @@ cleanfeed-ng
 ============
 
 Stable packaged release: 2026.07.3-rc1 (available from GitHub Releases)
-Current Git development tree: 2026.07.3-rc2 (testing only; no release ZIP)
+Current Git development tree: 2026.07.3-rc3 (testing only; no release ZIP)
 Minimum Perl: 5.38 (Ubuntu 24.04 LTS baseline)
 
 cleanfeed-ng is a maintained continuation of Cleanfeed for INN transit filtering.
-The main branch currently contains RC2 development code and must be used at the
+The main branch currently contains RC3 development code and must be used at the
 administrator's own risk. Operators who want the stable packaged baseline should
 use the 2026.07.3-rc1 ZIP from the GitHub Releases page.
 
@@ -14,6 +14,18 @@ Versions use YYYY.MM.VV, where VV is the sequential project version within the
 month. Optional suffixes are -alN for alpha, -beN for beta and -rcN for release
 candidates. The package originally announced as 2026-07-03 RC1 is canonically
 named 2026.07.3-rc1 under the new scheme.
+
+
+RC3 PHN IDENTITY SAFETY
+-----------------------
+The 2026.07.3-rc3 development tree changes PHN so a shared public injector is
+not treated as though it were one poster.  It prefers posting-account,
+posting-host, NNTP-Posting-Host, and Path .POSTED.<source> metadata.  A shared
+injector is retained only as an audit signal under the shipped defaults.
+
+RC3 also preserves complete, copyable Message-IDs and Newsgroups values in
+structured cleanfeed_event records and adds PHN identity-source, strength,
+correlation, count, and cutoff fields.
 
 
 RC2 HOT-PATH CHANGES
@@ -165,7 +177,7 @@ the news.err facility as an early-startup fallback. Example:
 A successful load reports the actual embedded interpreter in the one-time
 runtime banner:
 
-  filter: cleanfeed-ng runtime version=2026.07.3-rc2 perl=v5.38.2 \
+  filter: cleanfeed-ng runtime version=2026.07.3-rc3 perl=v5.38.2 \
   initialization=ok ...
 
 Check /var/log/news/news.err, the journal and the system log after any failed
@@ -611,6 +623,48 @@ An article posted both to a binary-enabled group and a text-only group must be
 evaluated according to the effective policy for every destination. Do not use a
 configuration that treats the presence of one alt.binaries group as permission
 to inject the same payload into unrelated text hierarchies.
+
+PHN POSTING IDENTITY AND SAFE FALLBACK
+--------------------------------------
+The PHN detector counts repeated articles sent to the same sorted Newsgroups
+distribution.  An injector hostname alone is not a poster identity: public
+servers can carry many unrelated users, causing a shared counter to reject
+legitimate articles.
+
+RC3 selects the first usable per-poster identity in this order:
+
+  1. Injection-Info posting-account
+  2. Injection-Info posting-host
+  3. NNTP-Posting-Host
+  4. Path .POSTED.<source>
+
+Strong identities use the normal PHN reject threshold.  If none exists, the
+shared injector fallback follows these controls:
+
+  phn_aggressive => 0
+      Safe shipped default.  Do not reject solely from a shared injector key.
+
+  phn_weak_identity_mode => 1
+      Count the shared injector/Newsgroups key and emit audit events after the
+      threshold.  Set to 0 to disable even that weak diagnostic.
+
+Setting phn_aggressive to 1 restores the historical shared-injector rejection
+and produces a startup warning.  This can aggregate unrelated users and is not
+recommended for public or multi-user news services.
+
+A site may append narrow group exceptions in cleanfeed.local:
+
+  $config_append{phn_exclude} =
+      '|^fr\.soc\.politique$|^de\.soc\.politik\.misc$';
+
+These are real newsgroup names used only as syntax examples, not recommended
+default exclusions.  Prefer strong identities and weak-identity audit over a
+growing list of group exceptions.
+
+Structured PHN events include identity_source, identity_strength, a truncated
+SHA-256 correlation hash, count and cutoff.  The real Message-ID and complete
+Newsgroups list are preserved so an operator can retrieve the article directly.
+The account/host identity itself is not logged in clear text.
 
 STABLE RULES AND CF-* CODES
 ---------------------------

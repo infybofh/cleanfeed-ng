@@ -186,3 +186,31 @@ When the cache is disabled, the two historical classification phases remain
 separate, so opting out does not double the number of regex evaluations. Tests
 cover cache hits, disablement, entry bounds, overflow clearing, oversized keys
 and representative classification equivalence.
+
+## 2026.07.3-rc3: PHN identity hierarchy and weak fallback
+
+Production traffic from a public injector demonstrated that the historical
+PHN fallback could aggregate unrelated users whenever no usable posting host
+was present.  A shared injector plus one active newsgroup is not a per-poster
+identity and is therefore unsafe as a default rejection key.
+
+RC3 selects the first usable identity from `Injection-Info` `posting-account`,
+`Injection-Info` `posting-host`, `NNTP-Posting-Host`, and Path
+`.POSTED.<source>`.  Keys are namespaced by injector and identity source.  A
+shared injector remains available as a weak diagnostic: it is counted and
+audited by default, disabled with `phn_weak_identity_mode => 0`, or restored to
+the historical reject behaviour with the unchanged `phn_aggressive => 1`
+switch.  The shipped values are `phn_aggressive => 0` followed immediately by
+`phn_weak_identity_mode => 1`.
+
+PHN events identify the selected source and strength and include a truncated
+correlation hash, count, and cutoff without placing the raw account/host value
+in syslog.  Message-ID and Newsgroups fields are no longer passed through the
+generic lowercasing/truncating metrics-key sanitizer, so operators can copy the
+real Message-ID and see the complete destination list.
+
+Regression tests cover independent accounts behind one injector, legacy and
+Injection-Info posting-host values, Path `.POSTED` sources, weak audit, explicit
+legacy rejection, disabled weak counting, exemptions, complete structured-log
+fields, and configuration validation.
+

@@ -1,5 +1,33 @@
 # Changelog
 
+All notable changes to cleanfeed-ng are documented here.
+
+## 2026.07.3-rc3 - PHN identity safety and operational logging
+
+### Fixed
+- Reworked PHN identity selection so unrelated users of a shared public injector
+  no longer share a reject-capable counter when per-poster metadata is absent.
+- PHN now prefers `Injection-Info` `posting-account`, `Injection-Info`
+  `posting-host`, `NNTP-Posting-Host`, and Path `.POSTED.<source>` identities,
+  each namespaced by injector and source type.
+- Changed the shipped `phn_aggressive` value from `1` to `0`. The option name
+  remains unchanged for compatibility; enabling it restores the legacy shared-
+  injector reject and emits a startup warning.
+- Added `phn_weak_identity_mode => 1`: the shared injector/Newsgroups fallback
+  is retained as an audit signal by default and can be disabled with value `0`.
+- Preserved complete, copyable Message-IDs and complete Newsgroups values in
+  structured `cleanfeed_event` logs instead of lowercasing, replacing punctuation
+  and silently truncating them through the generic metrics-key sanitizer.
+
+### Added
+- PHN event metadata: `identity_source`, `identity_strength`, a raw-value-free
+  correlation hash, current `count`, and configured `cutoff`.
+- Narrow `phn_exclude` append examples for real group names, explicitly marked
+  as syntax examples rather than shipped policy.
+- Regression coverage for account separation, posting-host and `.POSTED` source
+  selection, weak audit mode, legacy aggressive rejection, exact Message-ID
+  logging, and untruncated Newsgroups logging.
+
 ## 2026.07.3-rc2 - Development/testing tree
 
 - Added explicit detection of INN's effective `dontrejectfiltered` setting at
@@ -122,7 +150,6 @@ Published originally as `2026-07-03 RC1`.
 - Removed unused compatibility wrappers and strengthened tests for hot-path
   behaviour, documented parameters and trusted bypass rules.
 
-All notable changes to cleanfeed-ng are documented here.
 
 ## 2026.07.2-al2 - Safe policy scope and full rejection taxonomy
 

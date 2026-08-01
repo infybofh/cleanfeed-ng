@@ -17,11 +17,11 @@
 `cleanfeed-ng` is a maintained, lightweight continuation of the historical Cleanfeed filter for the Perl filtering interface of INN `innd`. It is designed for server-to-server Usenet transit filtering, with particular attention to predictable behaviour, low overhead, safe configuration changes, and useful diagnostics.
 
 > **Stable packaged release:** `2026.07.3-rc1` — available as a ZIP from [GitHub Releases](https://github.com/infybofh/cleanfeed-ng/releases).  
-> **Development tree:** `2026.07.3-rc2` — testing only, available from the `main` branch and not published as a release ZIP.  
+> **Development tree:** `2026.07.3-rc3` — testing only, available from the `main` branch and not published as a release ZIP.  
 > **Runtime:** Perl 5.38 or newer; Ubuntu 24.04 LTS is the minimum supported platform baseline.
 
 > [!WARNING]
-> The `main` branch currently contains **2026.07.3-rc2**. It is under active testing and should be used at your own risk. Administrators who want the current stable, packaged baseline should use **2026.07.3-rc1** from the Releases page.
+> The `main` branch currently contains **2026.07.3-rc3**. It is under active testing and should be used at your own risk. Administrators who want the current stable, packaged baseline should use **2026.07.3-rc1** from the Releases page.
 
 > [!IMPORTANT]
 > cleanfeed-ng requires the Perl interpreter **embedded in `innd`** to be
@@ -51,14 +51,15 @@
 - Standalone configuration and article-inspection tooling.
 - Comment-only `bad_*` and `trusted_*` examples that are safe to copy before customization.
 
-## RC2 development focus
+## RC3 development focus
 
-The `2026.07.3-rc2` development tree keeps the RC1 filtering behaviour while making two deliberately small hot-path changes:
+The `2026.07.3-rc3` development tree corrects the PHN false-positive class exposed by production traffic through a shared public injector.
 
-- the obsolete Perl `study()` call has been removed; the old `study_max_lines` setting is temporarily accepted, ignored, and reported as deprecated;
-- deterministic regex classification of frequently repeated newsgroup names uses a lightweight bounded cache, with no LRU bookkeeping, per-hit logging, article-decision caching, or moderation-state caching. Group names longer than 255 bytes are classified normally but are not retained.
+PHN now selects a per-poster identity in this order: `Injection-Info` `posting-account`, `Injection-Info` `posting-host`, `NNTP-Posting-Host`, then a Path `.POSTED.<source>` token. Only when none is available does it fall back to the shared injector. That weak fallback is audit-only by default (`phn_weak_identity_mode => 1`); the historical reject behaviour remains available through the unchanged `phn_aggressive` option, whose shipped value is now `0`.
 
-External body rules continue to preserve historical Cleanfeed semantics: `bad_body`, `bad_url`, and `bad_url_central` inspect a bounded, cached, lowercased text window, and top-level `text/*` Base64 content is decoded before matching.
+Structured `cleanfeed_event` output now preserves the complete, copyable Message-ID and Newsgroups list. PHN events also report `identity_source`, `identity_strength`, a raw-value-free identity correlation hash, the current count, and the configured cutoff.
+
+RC3 retains the RC2 removal of obsolete `study()` work and the bounded deterministic newsgroup-classification cache.
 
 ## Versioning
 
@@ -148,7 +149,7 @@ reload. A successful first article after load or reload produces a one-time
 runtime line similar to:
 
 ```text
-filter: cleanfeed-ng runtime version=2026.07.3-rc2 perl=v5.38.2 initialization=ok ...
+filter: cleanfeed-ng runtime version=2026.07.3-rc3 perl=v5.38.2 initialization=ok ...
 ```
 
 The version printed by `perl -V` in an interactive shell may differ from the
@@ -234,6 +235,36 @@ writable by `news`.
 
 Set any path to an empty string to disable that output. Set
 `debug_batch_directory => ''` to disable debug batch capture.
+
+## PHN posting identity and safe fallback
+
+The PHN detector counts repeated articles to the same sorted Newsgroups distribution. A shared news service is not a poster identity: using only an injector such as `news.example.net` can merge thousands of unrelated users into one counter.
+
+RC3 therefore prefers, in order:
+
+1. `Injection-Info` `posting-account`;
+2. `Injection-Info` `posting-host`;
+3. `NNTP-Posting-Host`;
+4. a Path token of the form `.POSTED.<source>`.
+
+Those values are namespaced by injector and may enforce the normal PHN threshold. When none exists, `phn_weak_identity_mode => 1` keeps the shared-injector/Newsgroups key as an audit signal only. Set it to `0` to disable that weak signal. `phn_aggressive => 1` deliberately restores the legacy weak-identity reject and emits a startup warning; it is not recommended for public or multi-user injectors.
+
+Local group exclusions remain available through `phn_exclude`. Append narrowly scoped exceptions in `cleanfeed.local`, for example:
+
+```perl
+$config_append{phn_exclude} =
+    '|^fr\.soc\.politique$|^de\.soc\.politik\.misc$';
+```
+
+The examples are not shipped policy recommendations. Exclude a complete group only after inspecting real traffic; otherwise leave the weak fallback in audit mode and retain strong-identity PHN enforcement.
+
+PHN structured events include fields such as:
+
+```text
+cleanfeed_event action=audit rule=emp.phn ... message_id=<...> identity_source=shared_injector identity_strength=weak identity_hash=... count=151 cutoff=150 reason="EMP shared-injector/newsgroups threshold exceeded"
+```
+
+The hash permits correlation without logging the account or host identity in clear text. It is not a secret token or an anonymization guarantee.
 
 ## Quick verification
 

@@ -132,7 +132,8 @@ sub local_config {
     stats_interval => 3600,     # write status file every N seconds
     MIDmaxlife => 4,            # time to keep rejected message-ids, in hours
     md5_skips_followups => 1,   # avoid MD5 check on articles with References?
-    phn_aggressive => 1,        # use path for phn filter when no posting host
+    phn_aggressive => 0,        # 1 restores legacy reject on shared injector/group counters; may merge unrelated users
+    phn_weak_identity_mode => 1, # 1 audits that weak fallback; 0 disables it when no per-poster identity is available
     phr_aggressive => 1,        # use path for phr filter when no posting host
     do_mid_filter => 1,         # use the message-id CHECK filter? (INN only)
     do_supersedes_filter => 1,  # do the excessive supersedes filter?
@@ -416,7 +417,10 @@ sub local_config {
     phl_exclude => 'comp\.lang\.ruby|^microsoft\.|^alt\.bestjobsusa'.
         '|\.bbs\.|^relcom\.hot-news|^szn\.news\.',
 
-    ### Exclude these Newsgroups from the Posting-Host / Newsgroup filter
+    ### Exclude these Newsgroups from the posting-identity/Newsgroups PHN filter.
+    ### Prefer this only for known local exceptions.  RC3 already prevents the
+    ### shared-injector fallback from rejecting by default, so do not use broad
+    ### hierarchy exclusions as a substitute for reviewing PHN identity logs.
     phn_exclude => '^local\.|^alt\.anonymous\.messages'.
         '|^\w+\.bin|^microsoft\.|\.bbs\.|^alt\.bestjobsusa|^mozilla\.'.
         '|^gnus?\.|^alt\.pictures\.|^gmane\.|^fa\.|^stu\.|^corel\.|\.cvs\.'.
@@ -424,10 +428,10 @@ sub local_config {
         '|\.marketplace|\.ebay|\.forsale|^relcom\.hot-news|^szn\.news\.'.
         '|^comp\.lang\.python',
 
-    # These hosts create unlinkable Posting-Host headers, rendering them
-    # useless for hashing purposes.  In these instances the NPH and PHR filter
-    # will use the Path header instead, (if phn_aggressive is true).  The PHL
-    # filter will ignore posts from these hosts.
+    # These injectors create unlinkable Posting-Host values.  PHN will not
+    # treat host metadata from them as a strong identity; it will try an
+    # Injection-Info posting-account or Path .POSTED.<source>, then use the
+    # configured weak shared-injector fallback.  PHL still ignores them.
     bad_nph_hosts => 'newsguy\.com|tornevall\.net',
     
     ### Exempt these hosts from the Posting-Host / Lines filter
@@ -435,7 +439,7 @@ sub local_config {
         '|^freebsd\.csie\.nctu\.edu\.tw$|^ddt\.demos\.su$|^onlyNews customer$'.
         '|localhost\.pld-linux\.org',
 
-    ### Exempt these hosts from the Posting-Host / Newsgroup filter
+    ### Exempt matching PHN poster identities or injector hosts
     phn_exempt => '^localhost$|^127\.0\.0\.1$|localhost\.pld-linux\.org',
 
     ### Exempt these hosts from the High-Risk Newsgroups filter
@@ -485,6 +489,12 @@ sub local_config {
     %config_append = (
         # bin_allowed => '^example\.binaries\.',
         # allexclude  => '^local\.trusted\.',
+
+        # Site-specific PHN exclusions.  These real groups are examples only;
+        # leave the line commented unless local logs prove that the entire group
+        # should bypass PHN.  Keep the leading "|" so the expression is appended
+        # safely to the shipped phn_exclude value.
+        # phn_exclude => '|^fr\.soc\.politique$|^de\.soc\.politik\.misc$',
     );
 
     # Optional restricted-hierarchy definitions. An article crossposted from
