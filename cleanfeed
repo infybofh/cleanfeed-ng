@@ -3128,25 +3128,55 @@ sub byte_profile_findings {
         : ();
 }
 
+# Split a Path for supplemental sanity checks without mistaking RFC 5536/5537
+# <diag-match> syntax for an empty component.  A verified relay identity is
+# represented on the wire by two consecutive exclamation marks ("!!").  With
+# a naive split(/!/) that produces one empty array element, but that empty
+# element is syntax, not a missing Path token.  Only an empty element that is
+# not exactly one isolated separator between two non-empty components is
+# malformed (for example a leading/trailing "!" or "!!!").
+sub path_sanity_components {
+    my ($path) = @_;
+    my @raw = split(/!/, defined($path) ? $path : '', -1);
+    my @tokens;
+    my $invalid_empty = 0;
+
+    for my $i (0 .. $#raw) {
+        my $token = $raw[$i];
+        if ($token eq '') {
+            my $diag_match = $i > 0
+                && $i < $#raw
+                && $raw[$i - 1] ne ''
+                && $raw[$i + 1] ne '';
+            $invalid_empty++ unless $diag_match;
+            next;
+        }
+        push @tokens, $token;
+    }
+
+    return (\@tokens, $invalid_empty);
+}
+
 sub path_sanity_findings {
     return () unless $config{path_sanity_enabled};
 
-    my @tokens = split(/!/, $hdr{Path} || '', -1);
+    my ($tokens, $invalid_empty) =
+        path_sanity_components($hdr{Path} || '');
     my @findings;
     my %seen;
 
-    if (@tokens > $config{path_max_hops}) {
+    if (@$tokens > $config{path_max_hops}) {
         push @findings, [
             'path.hop_count',
-            'Path contains ' . scalar(@tokens)
+            'Path contains ' . scalar(@$tokens)
                 . " hops (limit $config{path_max_hops})",
         ];
     }
 
-    for my $token (@tokens) {
-        push @findings, ['path.empty_token', 'Path contains an empty token']
-            if $token eq '';
+    push @findings, ['path.empty_token', 'Path contains an empty token']
+        if $invalid_empty;
 
+    for my $token (@$tokens) {
         if (length($token) > $config{path_max_token_bytes}) {
             push @findings, [
                 'path.token_length',
@@ -3156,8 +3186,7 @@ sub path_sanity_findings {
 
         my $normalized = lc $token;
         $seen{$normalized}++;
-        if ($token ne ''
-                && $seen{$normalized} == $config{path_repeat_ceiling} + 1) {
+        if ($seen{$normalized} == $config{path_repeat_ceiling} + 1) {
             push @findings, [
                 'path.repeated_token',
                 "Path token '$token' is repeated more than "

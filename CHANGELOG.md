@@ -2,6 +2,17 @@
 
 All notable changes to cleanfeed-ng are documented here.
 
+## Unreleased - Path diag-match compatibility
+
+### Fixed
+- Corrected the supplemental Path sanity detector so RFC 5536/5537 `!!`
+  `diag-match` syntax is not misclassified as `path.empty_token`.
+- Excluded the syntactic `diag-match` separator from the supplemental Path hop
+  count while preserving detection of genuinely malformed leading, trailing,
+  or repeated empty components such as `!host`, `host!`, and `host!!!next`.
+- Updated the standalone `cleanfeed-admin.pl --test-article` lightweight Path
+  check to use the same `diag-match` semantics.
+
 ## 2026.07.3-rc3 - PHN identity safety and operational logging
 
 ### Fixed

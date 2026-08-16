@@ -217,6 +217,8 @@ sub local_config {
     binary_byte_profile_scope => 'policy',
 
     # Path sanity limits. INN already performs core Path handling; these are supplemental checks.
+    # RFC 5536/5537 permits "!!" as a diag-match marker when a relay has
+    # verified the identity to its right; it is not treated as an empty token.
     path_sanity_enabled => 1,
     path_max_hops => 100,             # 0 is not useful; typical feeds are far below this value.
     path_max_token_bytes => 255,

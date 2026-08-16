@@ -64,7 +64,15 @@ if ($article) {
   push @m,'CF-BINARY-MIME' if ($h{'Content-Type'}||'') =~ m{^(?:application|audio|video|image|model|font)/}i;
   push @m,'CF-MALFORMED-ENCODING' if ($h{'Content-Type'}||'') =~ /^multipart\//i && ($h{'Content-Type'}||'') !~ /boundary\s*=/i;
   my $max=0; for(split(/\n/,$body,-1)){ $max=length($_) if length($_)>$max; } push @m,'CF-LONG-LINE' if $max>1048576;
-  my @path=split(/!/,$h{Path}||'',-1); push @m,'CF-PATH-SANITY' if @path>100 || grep { $_ eq '' || length($_)>255 } @path;
+  my @path_raw=split(/!/,$h{Path}||'',-1); my @path; my $bad_empty=0;
+  for my $i (0..$#path_raw) {
+    if ($path_raw[$i] eq '') {
+      my $diag_match=$i>0 && $i<$#path_raw && $path_raw[$i-1] ne '' && $path_raw[$i+1] ne '';
+      $bad_empty=1 unless $diag_match; next;
+    }
+    push @path,$path_raw[$i];
+  }
+  push @m,'CF-PATH-SANITY' if @path>100 || $bad_empty || grep { length($_)>255 } @path;
   print "Article: $article\nResult: ",(@m?'MATCH':'NO LIGHTWEIGHT MATCH'),"\n";
   print "Matches:\n  $_\n" for @m;
   print "Note: this standalone command exercises lightweight structural signatures; the authoritative result is produced by cleanfeed inside INN with the complete configuration and history state.\n";

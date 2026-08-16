@@ -20,7 +20,7 @@ Automation should use the rule name or `CF-*` code, not the explanatory text. He
 | `structure.header_line` | `CF-HEADER-LINE-LONG` | Header line exceeds the configured limit. |
 | `structure.body_line` | `CF-BODY-LINE-LONG` | Body line exceeds the configured limit. |
 | `path.hop_count` | `CF-PATH-HOP-COUNT` | Too many Path hops. |
-| `path.empty_token` | `CF-PATH-EMPTY-TOKEN` | Empty Path component. |
+| `path.empty_token` | `CF-PATH-EMPTY-TOKEN` | Malformed empty Path component; RFC 5536/5537 `!!` diag-match syntax is valid and is not reported. |
 | `path.token_length` | `CF-PATH-TOKEN-LENGTH` | Path component is too long. |
 | `path.repeated_token` | `CF-PATH-REPEATED-TOKEN` | One Path component repeats too often. |
 | `anomaly.peer_rate` | `CF-PEER-RATE-ANOMALY` | Peer exceeds the audit rate threshold. |

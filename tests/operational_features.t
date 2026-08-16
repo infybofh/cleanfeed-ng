@@ -42,6 +42,30 @@ $config{path_max_hops}=100; $config{path_repeat_ceiling}=1; $hdr{Path}='a!b!a';
 @f=path_sanity_findings();
 is($f[0][0],'path.repeated_token','repeated path token has granular rule');
 
+$config{path_repeat_ceiling}=3;
+$hdr{Path}='fontana.bofh.team!news.bofh.team!nnrp.usenet.blueworldhosting.com!!news.usenet.blueworldhosting.com!spool1.usenet.blueworldhosting.com!injection-bsd1!not-for-mail';
+@f=path_sanity_findings();
+ok(!grep($_->[0] eq 'path.empty_token', @f),
+    'RFC diag-match double bang is not an empty Path token');
+
+$hdr{Path}='foo.isp.example!.SEEN.isp.example!foo-news!.MISMATCH.2001:DB8:0:0:8:800:200C:417A!bar.isp.example!!old.site.example!barbaz!!baz.isp.example!.POSTED.dialup123.baz.isp.example!not-for-mail';
+@f=path_sanity_findings();
+ok(!grep($_->[0] eq 'path.empty_token', @f),
+    'RFC 5537 Path example accepts every diag-match');
+
+$config{path_max_hops}=2; $hdr{Path}='a!!b';
+@f=path_sanity_findings();
+ok(!grep($_->[0] eq 'path.hop_count', @f),
+    'diag-match does not inflate Path hop count');
+
+$config{path_max_hops}=100;
+for my $bad_path ('!a!b', 'a!b!', 'a!!!b') {
+    $hdr{Path}=$bad_path;
+    @f=path_sanity_findings();
+    ok(grep($_->[0] eq 'path.empty_token', @f),
+        "malformed Path $bad_path still reports an empty token");
+}
+
 $config{binary_byte_profile_enabled}=1; $config{binary_ratio_min_bytes}=10; $config{binary_ratio_scan_bytes}=100;
 $config{binary_nonprintable_ratio_percent}=10; $config{binary_byte_profile_scope}='all'; $hdr{__BODY__}="\x00"x20 . "a"x20;
 @f=byte_profile_findings();
