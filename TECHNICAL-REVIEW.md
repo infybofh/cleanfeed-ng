@@ -214,3 +214,26 @@ Injection-Info posting-host values, Path `.POSTED` sources, weak audit, explicit
 legacy rejection, disabled weak counting, exemptions, complete structured-log
 fields, and configuration validation.
 
+
+
+## 2026.10.1: Followup arithmetic, runtime snapshots and Path diag-match
+
+The October release closes three production-review findings. First, legacy
+Cleanfeed intentionally defines `fupcnt` as the number of effective followup
+targets: explicit `Followup-To`, or `Newsgroups` when no Followup-To exists.
+The old meow/topic code nevertheless subtracted classifiers computed over the
+unique Newsgroups+Followup-To union.  When those headers differed, the operands
+represented different sets.  `followup_policy_counts()` now computes meow/topic
+counts from the effective followup set for every subtraction from `fupcnt`, while
+union counters retain their historical presence/policy role.
+
+Second, `runtime_warnings()` is the single source for active runtime warnings.
+The runtime banner logs them, while HTML, legacy text and key/value status derive
+from the same state.  The first successful article after load/reload forces a
+report snapshot (including one CSV boundary row), so a previous version cannot
+remain displayed until the next periodic interval.
+
+Third, Path sanity now parses RFC 5536/5537 `diag-match`. A single empty split
+slot created by `!!` between two non-empty Path components is syntax, not an
+empty hop. Genuine leading/trailing empties and malformed longer runs remain
+findings. The same parser semantics are mirrored by the standalone article test.

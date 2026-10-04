@@ -2,16 +2,38 @@
 
 All notable changes to cleanfeed-ng are documented here.
 
-## Unreleased - Path diag-match compatibility
+## 2026.10.1 - CalVer stable release
 
 ### Fixed
-- Corrected the supplemental Path sanity detector so RFC 5536/5537 `!!`
-  `diag-match` syntax is not misclassified as `path.empty_token`.
-- Excluded the syntactic `diag-match` separator from the supplemental Path hop
-  count while preserving detection of genuinely malformed leading, trailing,
-  or repeated empty components such as `!host`, `host!`, and `host!!!next`.
-- Updated the standalone `cleanfeed-admin.pl --test-article` lightweight Path
-  check to use the same `diag-match` semantics.
+- Corrected inherited Followup-To crosspost arithmetic: `fupcnt` remains the
+  historical effective-followup count, while meow/topic exclusions subtracted
+  from it are now counted from the same effective followup set instead of the
+  Newsgroups+Followup-To union. This prevents false values and negative
+  off-topic counts when an explicit `Followup-To` differs from `Newsgroups`.
+- Corrected supplemental Path sanity parsing so RFC 5536/5537 `!!`
+  `diag-match` syntax is accepted and does not inflate the supplemental Path
+  hop count. Leading/trailing separators and malformed runs such as `!!!`
+  remain reportable.
+- Updated `cleanfeed-admin.pl --test-article` to use the same Path semantics.
+
+### Changed
+- Adopted explicit Calendar Versioning documentation: `YYYY.MM.N`, with optional
+  alpha/beta/release-candidate suffixes before a stable release.
+- Runtime HTML, legacy text, key/value status and CSV reports are force-published
+  on the first successful article after load/reload, so they immediately show
+  the running version and configuration rather than waiting for `stats_interval`.
+- Centralized active runtime warnings. `cleanfeed.local` load failures,
+  `dontrejectfiltered`, and `phn_aggressive` now use one warning source for
+  syslog and generated reports. Key/value status adds `runtime_warning_count`
+  and `runtime_warning_<key>=1`.
+- Expanded operator/developer documentation with source-navigation guidance for
+  stable rule names and `CF-*` codes, Followup-To count semantics, CalVer,
+  runtime reports, and external-regex troubleshooting.
+
+### Retained from 2026.07.3-rc3
+- PHN per-poster identity selection, safe weak shared-injector fallback, exact
+  copyable Message-ID logging, PHN correlation fields, bounded group cache, and
+  the RC2/RC3 operational hardening remain unchanged except where noted above.
 
 ## 2026.07.3-rc3 - PHN identity safety and operational logging
 

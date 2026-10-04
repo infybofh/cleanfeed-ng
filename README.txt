@@ -1,55 +1,48 @@
 cleanfeed-ng
 ============
 
-Stable packaged release: 2026.07.3-rc1 (available from GitHub Releases)
-Current Git development tree: 2026.07.3-rc3 (testing only; no release ZIP)
+Current release: 2026.10.1
 Minimum Perl: 5.38 (Ubuntu 24.04 LTS baseline)
 
 cleanfeed-ng is a maintained continuation of Cleanfeed for INN transit filtering.
-The main branch currently contains RC3 development code and must be used at the
-administrator's own risk. Operators who want the stable packaged baseline should
-use the 2026.07.3-rc1 ZIP from the GitHub Releases page.
 
-Versions use YYYY.MM.VV, where VV is the sequential project version within the
-month. Optional suffixes are -alN for alpha, -beN for beta and -rcN for release
-candidates. The package originally announced as 2026-07-03 RC1 is canonically
-named 2026.07.3-rc1 under the new scheme.
+VERSIONING
+----------
+cleanfeed-ng uses Calendar Versioning (CalVer): YYYY.MM.N, where N starts at 1
+and increments for each release in the same calendar month. Optional development
+suffixes are -alN, -beN and -rcN. Historical July 2026 tags retain their
+published names; the current October release is 2026.10.1.
 
+2026.10.1 CORRECTNESS AND OPERATIONS
+------------------------------------
+This release carries forward the RC3 PHN identity safety work and adds:
 
-RC3 PHN IDENTITY SAFETY
------------------------
-The 2026.07.3-rc3 development tree changes PHN so a shared public injector is
-not treated as though it were one poster.  It prefers posting-account,
-posting-host, NNTP-Posting-Host, and Path .POSTED.<source> metadata.  A shared
-injector is retained only as an audit signal under the shipped defaults.
+  * Followup-To-aware meow/topic arithmetic. fupcnt remains the historical
+    effective-followup count; values subtracted from it are now counted from the
+    same followup set instead of the Newsgroups+Followup-To union.
+  * Immediate report publication after the first successful runtime
+    initialization following load/reload. HTML, legacy text, key=value status
+    and CSV output immediately identify the running version/configuration.
+  * One common runtime-warning source for syslog, HTML, legacy text and status
+    output. phn_aggressive is now visible alongside dontrejectfiltered and
+    cleanfeed.local load warnings.
+  * RFC 5536/5537 Path diag-match support: a valid "!!" no longer triggers
+    path.empty_token or inflates the supplemental hop count.
 
-RC3 also preserves complete, copyable Message-IDs and Newsgroups values in
-structured cleanfeed_event records and adds PHN identity-source, strength,
-correlation, count, and cutoff fields.
+PHN IDENTITY SAFETY
+-------------------
+PHN prefers posting-account, posting-host, NNTP-Posting-Host, and Path
+.POSTED.<source> metadata. A shared injector is retained only as an audit signal
+under the shipped defaults. Complete, copyable Message-IDs and Newsgroups values
+are preserved in structured cleanfeed_event records.
 
-
-RC2 HOT-PATH CHANGES
---------------------
-The 2026.07.3-rc2 development tree removes the obsolete Perl study() call. The
-legacy study_max_lines setting is temporarily accepted and ignored; when it is
-present, cleanfeed-ng emits one deprecation notice at configuration load, and
-cleanfeed-admin.pl reports it during --check-config.
-
-RC2 also introduces a lightweight bounded cache for deterministic per-newsgroup
-regex classification. The cache stores one integer bitmask per recently seen
-group. It does not cache moderation state, article decisions, reason codes,
-audit events or body/header findings. It performs no per-hit logging and uses a
-simple full clear when the configured entry limit is reached, avoiding LRU or
-timestamp bookkeeping in the synchronous INN article path. Group names longer
-than 255 bytes are classified normally but are not retained.
-
-Default settings:
-
-  group_class_cache_enabled => 1
-  group_class_cache_entries => 8192
-
-Set either value to 0 to disable the cache. The maximum accepted entry limit is
-65536. The cache is reset whenever configuration is loaded.
+CODE AND REASON-CODE NAVIGATION
+-------------------------------
+Use docs/REASON-CODES.md as the public rule/code index. It identifies the source
+functions/areas that generate each family. In cleanfeed, reject_code is
+the authoritative rule-to-CF-code map; deterministic legacy decisions are found
+by searching reject(, modern audit/reject findings through mode_result( and
+apply_finding_set(, and EMP logic under apply_*_filter routines.
 
 PROJECT HISTORY AND CREDIT
 --------------------------
@@ -177,7 +170,7 @@ the news.err facility as an early-startup fallback. Example:
 A successful load reports the actual embedded interpreter in the one-time
 runtime banner:
 
-  filter: cleanfeed-ng runtime version=2026.07.3-rc3 perl=v5.38.2 \
+  filter: cleanfeed-ng runtime version=2026.10.1 perl=v5.38.2 \
   initialization=ok ...
 
 Check /var/log/news/news.err, the journal and the system log after any failed
@@ -631,7 +624,7 @@ distribution.  An injector hostname alone is not a poster identity: public
 servers can carry many unrelated users, causing a shared counter to reject
 legitimate articles.
 
-RC3 selects the first usable per-poster identity in this order:
+The PHN detector selects the first usable per-poster identity in this order:
 
   1. Injection-Info posting-account
   2. Injection-Info posting-host

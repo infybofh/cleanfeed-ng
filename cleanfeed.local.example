@@ -89,7 +89,10 @@ sub local_config {
     %config_local = (
     verbose => 1,           # verbose rejection reasons in news.notice/logfile?
     aggressive => 1,            # 1 enables stricter legacy checks; use 0 for a more conservative policy
-    maxgroups => 14,            # maximum number of groups in a crosspost
+    # Historical Cleanfeed semantics: this limits EFFECTIVE FOLLOWUP targets,
+    # not necessarily the raw Newsgroups count. With no Followup-To the values
+    # are identical; with an explicit Followup-To, that header is counted.
+    maxgroups => 14,
     block_binaries => 1,        # block misplaced binaries
     block_all_binaries => 0,    # Reject all binary regardless of distribution
     block_late_cancels => 0,    # block cancels of rejected articles
@@ -253,12 +256,14 @@ sub local_config {
     trusted_bypass_size => 0,        # Bypass article-size policy; normally keep 0.
 
     low_xpost_maxgroups => 6,   # max xposts in low_xpost_groups
-    meow_ext_maxgroups => 2,    # max xposts from meow_groups to other groups
-    off_topic1_maxgroups => 2,  # How many off topic groups allowed in a distro
+    # 2026.10.1: off-group arithmetic below is based on the same effective
+    # Followup-To set as fupcnt, avoiding the legacy union/fupcnt mismatch.
+    meow_ext_maxgroups => 2,    # max effective followups outside meow_groups
+    off_topic1_maxgroups => 2,  # max effective followups outside topic1
     on_topic1_maxgroups => 5,   # How many on-topic groups allowed in a distro
     on_topic1_mingroups => 2,   # How many on-topic groups req'd to trigger
                                 # off-topic filter
-    off_topic2_maxgroups => 2,
+    off_topic2_maxgroups => 2,  # max effective followups outside topic2
     on_topic2_maxgroups => 5,
     on_topic2_mingroups => 2,
 
@@ -420,7 +425,7 @@ sub local_config {
         '|\.bbs\.|^relcom\.hot-news|^szn\.news\.',
 
     ### Exclude these Newsgroups from the posting-identity/Newsgroups PHN filter.
-    ### Prefer this only for known local exceptions.  RC3 already prevents the
+    ### Prefer this only for known local exceptions.  Current defaults prevent the
     ### shared-injector fallback from rejecting by default, so do not use broad
     ### hierarchy exclusions as a substitute for reviewing PHN identity logs.
     phn_exclude => '^local\.|^alt\.anonymous\.messages'.

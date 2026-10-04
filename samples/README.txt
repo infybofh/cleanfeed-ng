@@ -80,3 +80,11 @@ Before enabling any line:
 7. Deploy behavioural changes in audit mode before reject mode.
 
 See docs/REGEX-COOKBOOK.md for a longer tutorial and copyable examples.
+
+
+TROUBLESHOOTING A MATCH
+-----------------------
+When an external rule fires, use the structured cleanfeed_event rule/CF code and
+consult docs/REASON-CODES.md first. Then identify the external file named in the
+relevant source/configuration documentation. Keep a small local corpus containing
+one intended match and several non-matches for every site-specific expression.

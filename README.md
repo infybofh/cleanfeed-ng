@@ -16,12 +16,8 @@
 
 `cleanfeed-ng` is a maintained, lightweight continuation of the historical Cleanfeed filter for the Perl filtering interface of INN `innd`. It is designed for server-to-server Usenet transit filtering, with particular attention to predictable behaviour, low overhead, safe configuration changes, and useful diagnostics.
 
-> **Stable packaged release:** `2026.07.3-rc1` — available as a ZIP from [GitHub Releases](https://github.com/infybofh/cleanfeed-ng/releases).  
-> **Development tree:** `2026.07.3-rc3` — testing only, available from the `main` branch and not published as a release ZIP.  
+> **Current release:** `2026.10.1` — first October 2026 CalVer release.  Available from the project Releases page once published.  
 > **Runtime:** Perl 5.38 or newer; Ubuntu 24.04 LTS is the minimum supported platform baseline.
-
-> [!WARNING]
-> The `main` branch currently contains **2026.07.3-rc3**. It is under active testing and should be used at your own risk. Administrators who want the current stable, packaged baseline should use **2026.07.3-rc1** from the Releases page.
 
 > [!IMPORTANT]
 > cleanfeed-ng requires the Perl interpreter **embedded in `innd`** to be
@@ -51,25 +47,40 @@
 - Standalone configuration and article-inspection tooling.
 - Comment-only `bad_*` and `trusted_*` examples that are safe to copy before customization.
 
-## RC3 development focus
+## 2026.10.1 release focus
 
-The `2026.07.3-rc3` development tree corrects the PHN false-positive class exposed by production traffic through a shared public injector.
+The October 2026 release promotes the production-tested RC3 work and adds three
+important correctness/operational fixes:
 
-PHN now selects a per-poster identity in this order: `Injection-Info` `posting-account`, `Injection-Info` `posting-host`, `NNTP-Posting-Host`, then a Path `.POSTED.<source>` token. Only when none is available does it fall back to the shared injector. That weak fallback is audit-only by default (`phn_weak_identity_mode => 1`); the historical reject behaviour remains available through the unchanged `phn_aggressive` option, whose shipped value is now `0`.
+- **Followup-aware crosspost arithmetic:** `fupcnt` keeps its historical Cleanfeed
+  meaning (effective followup targets), while meow/topic subtraction now uses
+  classifications counted from the same Followup-To set.  This removes an
+  inherited bug that could produce incorrect or even negative off-topic counts
+  when `Followup-To` differed from `Newsgroups`.
+- **Immediate runtime reports:** the first successful article after load/reload
+  forces fresh HTML, legacy text, key/value status, and CSV output so the files
+  immediately describe the version and configuration actually running.
+- **RFC Path diag-match support:** RFC 5536/5537 `!!` is recognized as valid
+  `diag-match` syntax rather than an empty Path component.
 
-Structured `cleanfeed_event` output now preserves the complete, copyable Message-ID and Newsgroups list. PHN events also report `identity_source`, `identity_strength`, a raw-value-free identity correlation hash, the current count, and the configured cutoff.
-
-RC3 retains the RC2 removal of obsolete `study()` work and the bounded deterministic newsgroup-classification cache.
+The RC3 PHN identity hierarchy remains in place: per-poster metadata is preferred
+and the shared-injector fallback is audit-only by default.
 
 ## Versioning
 
-cleanfeed-ng versions use:
+cleanfeed-ng uses **Calendar Versioning (CalVer)**:
 
 ```text
-YYYY.MM.VV[-alN|-beN|-rcN]
+YYYY.MM.N[-alN|-beN|-rcN]
 ```
 
-`YYYY` is the year, `MM` the month, and `VV` the sequential project version within that month. Optional suffixes identify alpha (`-alN`), beta (`-beN`), and release-candidate (`-rcN`) builds. The RC1 package was originally published under the older label `2026-07-03 RC1`; its canonical name under this scheme is `2026.07.3-rc1`.
+- `YYYY` — release year;
+- `MM` — release month;
+- `N` — sequential release number in that month, starting at 1;
+- optional suffixes identify alpha, beta, or release-candidate builds.
+
+Examples: `2026.10.1`, `2026.10.2`, `2026.11.1-rc1`.
+Historical July 2026 labels are retained unchanged in old release notes and tags.
 
 ## Start here
 
@@ -78,6 +89,26 @@ YYYY.MM.VV[-alN|-beN|-rcN]
 3. Read the reason-code reference: [`docs/REASON-CODES.md`](docs/REASON-CODES.md).
 4. For Perl regex examples, see [`docs/REGEX-COOKBOOK.md`](docs/REGEX-COOKBOOK.md) when present and [`samples/README.txt`](samples/README.txt).
 5. Begin new or changed policies in `audit` mode and inspect real traffic before enabling `reject`.
+
+## Code navigation for reviewers
+
+The runtime is intentionally kept mostly in one `cleanfeed` file because INN
+loads it directly.  To find a rule quickly:
+
+- start with [`docs/REASON-CODES.md`](docs/REASON-CODES.md), which now maps each
+  public `CF-*` code/rule family to the function or source area that emits it;
+- search `reject_code` for the authoritative rule-to-code mapping;
+- search `reject(` for legacy deterministic rejects and `mode_result(` /
+  `apply_finding_set(` for audit/reject-capable modern findings;
+- EMP logic is grouped under the `apply_*_filter` routines; PHN identity
+  selection is in `phn_identity_for_article`;
+- group classification is in `classify_group_primary_uncached`,
+  `classify_group_followup_uncached`, and `followup_policy_counts`;
+- report generation is in `write_metrics`, `write_html_stats`, and `writestats`.
+
+This map is also intended for people reviewing the code without prior Cleanfeed
+history; human-readable reject text is not a stable API, while rule names and
+`CF-*` codes are.
 
 ## Configuring `CLEANFEED_CONFIG_DIR`
 
@@ -149,7 +180,7 @@ reload. A successful first article after load or reload produces a one-time
 runtime line similar to:
 
 ```text
-filter: cleanfeed-ng runtime version=2026.07.3-rc3 perl=v5.38.2 initialization=ok ...
+filter: cleanfeed-ng runtime version=2026.10.1 perl=v5.38.2 initialization=ok ...
 ```
 
 The version printed by `perl -V` in an interactive shell may differ from the
@@ -196,7 +227,7 @@ articles discarded from local history, overview, or storage.
 
 ## Default reports, metrics, and debug paths
 
-The RC2 defaults enable the lightweight reports and use these locations:
+The current defaults enable the lightweight reports and use these locations:
 
 ```text
 /var/www/cleanfeed.stat
@@ -240,7 +271,7 @@ Set any path to an empty string to disable that output. Set
 
 The PHN detector counts repeated articles to the same sorted Newsgroups distribution. A shared news service is not a poster identity: using only an injector such as `news.example.net` can merge thousands of unrelated users into one counter.
 
-RC3 therefore prefers, in order:
+PHN therefore prefers, in order:
 
 1. `Injection-Info` `posting-account`;
 2. `Injection-Info` `posting-host`;

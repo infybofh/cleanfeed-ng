@@ -43,3 +43,11 @@ VALIDATION AND EXECUTION
 
 Review the generated central list before installing it. Broad expressions,
 small thresholds or unrepresentative log samples can create false positives.
+
+
+RELATION TO THE RUNTIME FILTER
+------------------------------
+The generated bad_url_central file is consumed only after the normal cleanfeed
+external-list loader reads it. The Python utility does not assign CF reason
+codes itself. Runtime URL matches are classified/logged by cleanfeed; use
+`docs/REASON-CODES.md` and the scoring section of `cleanfeed` when tracing them.

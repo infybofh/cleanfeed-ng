@@ -92,9 +92,10 @@ $MODE ||= 'inn';
 # IF YOU WANT TO CHANGE SOMETHING, PLEASE USE cleanfeed.local
 ##############################################################################
 
-# cleanfeed-ng release version (YYYY.MM.VV with an optional -alN, -beN or
-# -rcN development suffix).
-$cleanfeed_ng_version = '2026.07.3-rc3';
+# cleanfeed-ng uses Calendar Versioning: YYYY.MM.N, where N is the
+# sequential release number in that calendar month. Optional development
+# suffixes (-alN, -beN, -rcN) may be used before a stable release.
+$cleanfeed_ng_version = '2026.10.1';
 # Backward-compatible internal alias used by metrics and fingerprints.
 $cleanfeed_maintenance_version = $cleanfeed_ng_version;
 
@@ -147,7 +148,7 @@ sub get_config {
     %config = (
     verbose => 1,           # verbose rejection reasons in news.notice/logfile?
     aggressive => 1,            # set to 0 if your lawyers are paranoid
-    maxgroups => 14,            # maximum number of groups in a crosspost
+    maxgroups => 14,            # maximum effective followup targets (historical Cleanfeed semantics)
     block_binaries => 1,        # block misplaced binaries
     block_all_binaries => 0,    # Reject all binary regardless of distribution
     block_late_cancels => 0,    # block cancels of rejected articles
@@ -1101,6 +1102,23 @@ sub group_followup_classification {
     return group_classification($group);
 }
 
+# Count only classifications present in the effective followup target set.
+# Keep this separate from the historical Newsgroups+Followup-To union counters:
+# arithmetic against fupcnt must use counts from the same set.
+sub followup_policy_counts {
+    my ($groups_ref) = @_;
+    my %counts = (meow => 0, topic1 => 0, topic2 => 0);
+    return \%counts if not $groups_ref;
+
+    for my $group (@$groups_ref) {
+        my $class = group_followup_classification($group);
+        $counts{meow}++   if $class & GC_MEOW;
+        $counts{topic1}++ if $class & GC_TOPIC1;
+        $counts{topic2}++ if $class & GC_TOPIC2;
+    }
+    return \%counts;
+}
+
 # Preserve the historical Cleanfeed allexclude semantics before the newer
 # guard and policy engines run.  Filtering is skipped only when every unique
 # Newsgroups and Followup-To target matches allexclude; any crosspost outside
@@ -1176,6 +1194,30 @@ sub detect_inn_dontrejectfiltered {
 # Log the effective runtime state once after every initial load or reload, at
 # the first article where INN::syslog is known to be available.  This is outside
 # the recurring hot path after the first boolean check has succeeded.
+sub runtime_warnings {
+    my @warnings;
+
+    push @warnings, {
+        key => 'cleanfeed_local',
+        log => 'WARNING cleanfeed.local failed to load; built-in or previous valid settings are in use',
+        text => 'cleanfeed.local failed to load; built-in or previous valid settings are in use.',
+    } if $Local_Conf_Err;
+
+    push @warnings, {
+        key => 'dontrejectfiltered',
+        log => 'WARNING dontrejectfiltered=true; INN will accept articles returned as rejected by cleanfeed-ng and may store them locally. Set dontrejectfiltered: false in inn.conf when filter verdicts must be effective',
+        text => 'INN dontrejectfiltered is enabled; filter rejects are accepted locally and may be stored.',
+    } if $INN_Dontrejectfiltered eq '1';
+
+    push @warnings, {
+        key => 'phn_aggressive',
+        log => 'WARNING phn_aggressive=1 enables legacy PHN rejection using a shared injector/newsgroups counter when no per-poster identity is available; public news services may aggregate unrelated users',
+        text => 'phn_aggressive=1 enables legacy PHN rejection using a shared injector/newsgroups counter; public news services may aggregate unrelated users.',
+    } if $config{phn_aggressive};
+
+    return @warnings;
+}
+
 sub log_runtime_banner {
     return if $Runtime_Banner_Logged;
     return if not defined &INN::syslog;
@@ -1203,17 +1245,8 @@ sub log_runtime_banner {
         . ' phn_weak_identity_mode=' . (defined $config{phn_weak_identity_mode} ? $config{phn_weak_identity_mode} : 'undef')
         . ' dontrejectfiltered=' . $INN_Dontrejectfiltered);
 
-    if ($INN_Dontrejectfiltered eq '1') {
-        slog('W', 'WARNING dontrejectfiltered=true; INN will accept articles '
-            . 'returned as rejected by cleanfeed-ng and may store them locally. '
-            . 'Set dontrejectfiltered: false in inn.conf when filter verdicts '
-            . 'must be effective');
-    }
-
-    if ($config{phn_aggressive}) {
-        slog('W', 'WARNING phn_aggressive=1 enables legacy PHN rejection using '
-            . 'a shared injector/newsgroups counter when no per-poster identity '
-            . 'is available; public news services may aggregate unrelated users');
+    for my $warning (runtime_warnings()) {
+        slog('W', $warning->{log});
     }
 
     if ($Study_Max_Lines_Configured) {
@@ -1225,6 +1258,13 @@ sub log_runtime_banner {
     # Prepare configured report/metrics/debug paths once, outside the recurring
     # article hot path.  Any permission problem is logged once per load/reload.
     prepare_configured_output_paths();
+
+    # Publish a fresh snapshot immediately after the first successful article
+    # following load/reload.  This makes the generated files describe the
+    # running version/configuration immediately instead of waiting for the
+    # periodic statistics interval.  Force one CSV row as an explicit runtime
+    # boundary, but suppress the normal periodic syslog status line.
+    writestats(1, 1, 1);
     return;
 }
 
@@ -1254,8 +1294,9 @@ sub filter_art {
     # injection_host    Str:    Injection host
     # phn_identity_*:   Str/Int: PHN source, strength, raw-value-free hash and count
     # grpcnt:           Int:    Count of groups in Newsgroups header
-    # fupcnt            Int:    Count of groups in Followup-To header
-    # grpfupcnt:        Int:    Count of combined grpcnt and fupcnt (Unique)
+    # fupcnt:           Int:    Count of effective followup targets (Followup-To, or Newsgroups when absent)
+    # grpfupcnt:        Int:    Count of unique Newsgroups + effective followup targets
+    # fup_meow/topic*:  Int:    Followup-only classification counts used for like-for-like arithmetic
     # lines             Int:    Number of lines reported by inn
     # letters           Int:    Number of letters in the post [a-zA-Z]
     # uppercase         Int:    Number of uppercase letters in the post [A-Z]
@@ -1418,6 +1459,17 @@ sub filter_art {
         $gr{localhier}++ if $class & GC_LOCALHIER;
     };
 
+    # Followup-only classification counts.  Historical Cleanfeed used the
+    # union counters above in arithmetic with fupcnt.  That mixed two different
+    # sets whenever an explicit Followup-To differed from Newsgroups and could
+    # even produce negative "off-topic" counts.  Keep the union counters for
+    # historical policy/presence semantics, but use these like-for-like counts
+    # whenever subtracting from fupcnt.
+    my $fup_gr = followup_policy_counts(\@followups);
+    $state{fup_meow} = $fup_gr->{meow};
+    $state{fup_topic1} = $fup_gr->{topic1};
+    $state{fup_topic2} = $fup_gr->{topic2};
+
     # These only count if all Newsgroups match
     $gr{image} = (($gr{image} + $gr{binary}) >= $state{grpcnt});
     $gr{binary} = ($gr{binary} == $state{grpcnt});
@@ -1567,13 +1619,13 @@ sub filter_art {
             if $gr{meow}
                 #and $gr{meow} != scalar @groups
                 and $config{meow_ext_maxgroups}
-                and ($state{fupcnt} - $gr{meow}) > $config{meow_ext_maxgroups};
+                and ($state{fupcnt} - $state{fup_meow}) > $config{meow_ext_maxgroups};
 
         return reject('Topic Filter (Off-Topic1)', 'Topic Filter')
             if $gr{topic1}
                 and $gr{topic1} >= $config{on_topic1_mingroups}
                 and $config{off_topic1_maxgroups}
-                and $state{fupcnt} - $gr{topic1} > $config{off_topic1_maxgroups};
+                and $state{fupcnt} - $state{fup_topic1} > $config{off_topic1_maxgroups};
 
         return reject('Topic Filter (On-Topic1)', 'Topic Filter')
             if $gr{topic1} and $config{on_topic1_maxgroups}
@@ -1583,7 +1635,7 @@ sub filter_art {
             if $gr{topic2}
                 and $gr{topic2} >= $config{on_topic2_mingroups}
                 and $config{off_topic2_maxgroups}
-                and $state{fupcnt} - $gr{topic2} > $config{off_topic2_maxgroups};
+                and $state{fupcnt} - $state{fup_topic2} > $config{off_topic2_maxgroups};
 
         return reject('Topic Filter (On-Topic2)', 'Topic Filter')
             if $gr{topic2} and $config{on_topic2_maxgroups}
@@ -3842,6 +3894,9 @@ sub metric_snapshot_lines {
     push @lines, "started_epoch=$started";
     push @lines, "uptime_seconds=$uptime";
     push @lines, "inn_dontrejectfiltered=$INN_Dontrejectfiltered";
+    my @warnings = runtime_warnings();
+    push @lines, "runtime_warning_count=" . scalar(@warnings);
+    push @lines, "runtime_warning_" . $_->{key} . "=1" for @warnings;
     for my $key (qw(articles accepted rejected refused audited quarantined)) {
         push @lines, "$key=" . ($status{$key} || 0);
     }
@@ -3856,7 +3911,8 @@ sub metric_snapshot_lines {
 }
 
 sub write_metrics {
-    my ($report_now) = @_;
+    my ($report_now, $force_csv) = @_;
+    $force_csv ||= 0;
     return unless $config{metrics_enabled};
     $report_now = time if not defined $report_now;
 
@@ -3865,7 +3921,7 @@ sub write_metrics {
         if $config{metrics_status_file};
 
     if ($config{metrics_csv_file}
-            && $report_now - $Last_Metrics_CSV >= $config{metrics_csv_interval}) {
+            && ($force_csv || $report_now - $Last_Metrics_CSV >= $config{metrics_csv_interval})) {
         my $path = $config{metrics_csv_file};
         if (prepare_output_file($path, 'metrics CSV file', 0640, 0750)) {
             my $new = !-e $path || -z $path;
@@ -4023,10 +4079,10 @@ HTML_HEAD
     $html .= '<p>Generated ' . html_escape(scalar(localtime($report_now)))
         . '; filter started ' . html_escape(scalar(localtime($started)))
         . '; uptime ' . html_escape($uptime) . " seconds.</p>\n";
-    $html .= '<p class="warn"><strong>Warning:</strong> cleanfeed.local failed to load; built-in or previous valid settings are in use.</p>'
-        if $Local_Conf_Err;
-    $html .= '<p class="warn"><strong>Warning:</strong> INN has dontrejectfiltered enabled. Rejected filter verdicts are accepted locally and may be stored.</p>'
-        if $INN_Dontrejectfiltered eq '1';
+    for my $warning (runtime_warnings()) {
+        $html .= '<p class="warn"><strong>Warning:</strong> '
+            . html_escape($warning->{text}) . '</p>';
+    }
 
     $html .= '<h2>Article decisions</h2><div class="grid">';
     for my $key (qw(articles accepted rejected refused audited quarantined)) {
@@ -4084,6 +4140,8 @@ HTML_HEAD
 # hash sizes, and current configuration
 sub writestats {
     my $noreset = $_[0] || 0;
+    my $force_csv = $_[1] || 0;
+    my $suppress_syslog = $_[2] || 0;
     my $report_now = time;
     my $started = defined $Start_Time ? $Start_Time : $report_now;
     my $uptime = $report_now - $started;
@@ -4093,7 +4151,7 @@ sub writestats {
     timer_stats($report_now) if $config{timer_info};
 
     write_html_stats($report_now) if $config{html_statfile};
-    write_metrics($report_now);
+    write_metrics($report_now, $force_csv);
 
     return if not ($config{statfile} or $config{inn_syslog_status});
 
@@ -4105,7 +4163,7 @@ sub writestats {
     my $superentries   = $Suphistory ? $Suphistory->count : 0;
     my $midhistentries = $MIDhistory ? $MIDhistory->count : 0;
 
-    if ($config{inn_syslog_status}) {
+    if ($config{inn_syslog_status} and not $suppress_syslog) {
         my $message = 'status: ';
         $message .= "accepted $status{accepted} rejected $status{rejected}";
         $message .= " refused $status{refused}" if $config{do_mid_filter};
@@ -4147,10 +4205,9 @@ sub writestats {
         print FILE "Articles accepted per second: $timer{accept_rate}\n";
     }
 
-    print FILE "\ncleanfeed.local NOT loaded! Check file permissions.\n"
-        if $Local_Conf_Err;
-    print FILE "\nWARNING: INN dontrejectfiltered is enabled; filter rejects are accepted locally and may be stored.\n"
-        if $INN_Dontrejectfiltered eq '1';
+    for my $warning (runtime_warnings()) {
+        print FILE "\nWARNING: $warning->{text}\n";
+    }
 
     print FILE "\nSupersedes entries: $superentries\n";
     if ($Suphistory) {

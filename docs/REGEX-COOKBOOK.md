@@ -71,3 +71,25 @@ Use the administration tool before installation:
 
 Then deploy the relevant policy in audit mode and inspect real traffic before
 changing it to reject.
+
+
+## Appending to shipped expressions from cleanfeed.local
+
+Use `%config_append` when adding a local exception without replacing the shipped
+expression. Example PHN exclusions using real group-name syntax:
+
+```perl
+$config_append{phn_exclude} =
+    '|^fr\.soc\.politique$|^de\.soc\.politik\.misc$';
+```
+
+The leading `|` is intentional because the value is appended to an existing
+alternation. These groups are examples of exact anchoring only; they are not a
+recommended default exclusion list.
+
+## Debugging an unexpected rule
+
+Start with the `rule=` or `CF-*` value from `cleanfeed_event`, look it up in
+`docs/REASON-CODES.md`, then inspect the named source function. This is faster
+and more reliable than grepping the human-readable reason string, which may be
+clarified without changing the stable rule/code.

@@ -2,11 +2,11 @@
 use strict; use warnings; use Test::More; use FindBin;
 my $root="$FindBin::Bin/..";
 open my $vf,'<',"$root/VERSION" or die $!; chomp(my $version=<$vf>); close $vf;
-like($version,qr/^\d{4}\.\d{2}\.\d+(?:-(?:al|be|rc)\d+)?$/,'version uses YYYY.MM.VV with an optional development suffix');
+like($version,qr/^\d{4}\.\d{2}\.\d+(?:-(?:al|be|rc)\d+)?$/,'version uses CalVer YYYY.MM.N with an optional development suffix');
 open my $cf,'<',"$root/cleanfeed" or die $!; local $/; my $src=<$cf>; close $cf;
 like($src,qr/\$cleanfeed_ng_version\s*=\s*'\Q$version\E'/,'runtime version matches VERSION');
 unlike($src,qr/'(?:malformed\.encoding|structure\.path|anomaly\.rate|structure\.long_line)'/,'obsolete generic new-check rules are not emitted');
-for my $f (qw(README.md README.txt CHANGELOG.md CONTRIBUTING.md SECURITY.md TECHNICAL-REVIEW.md LICENSE)) { ok(-f "$root/$f","$f exists"); }
+for my $f (qw(README.md README.txt CHANGELOG.md CONTRIBUTING.md SECURITY.md TECHNICAL-REVIEW.md LICENSE docs/README.md docs/REASON-CODES.md docs/REGEX-COOKBOOK.md)) { ok(-f "$root/$f","$f exists"); }
 my $code = $src;
 like($code, qr/require\s+5\.038/, 'Perl 5.38 minimum is enforced');
 unlike($code, qr/metrics_prometheus_file/, 'Prometheus runtime output is absent');

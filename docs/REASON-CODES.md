@@ -2,8 +2,50 @@
 
 Automation should use the rule name or `CF-*` code, not the explanatory text. Heuristic checks default to audit; deterministic checks can be configured for rejection.
 
+## Where these codes are used in the source
+
+This file is also the code-navigation index requested by reviewers.  The
+authoritative rule-to-code mapping lives in `cleanfeed` inside
+`reject_code()`.  When tracing a specific event, search the stable `rule=` name
+first; human-readable text is intentionally allowed to improve without becoming
+an API.
+
+| Rule family | Primary source area | How it reaches a decision/log |
+|---|---|---|
+| `mime.*`, `yenc.*` | `encoding_findings()` | `apply_lightweight_guards()` -> `apply_finding_set()` -> `mode_result()` |
+| `binary.byte_profile` | `byte_profile_findings()` | same lightweight finding path |
+| `path.*` | `path_sanity_components()`, `path_sanity_findings()` | same lightweight finding path |
+| `anomaly.*` | `rate_anomaly_findings()` | same lightweight finding path |
+| `policy.binary`, `policy.size` | `policy_for_article()`, `apply_policy_engine()` | `mode_result()` |
+| `emp.phn` | `populate_posting_identity_state()`, `phn_identity_for_article()`, `apply_phn_filter()` | direct reject or structured weak audit |
+| `emp.md5`, `emp.phl`, `emp.phr`, `emp.fsl` | main `filter_art()` EMP section and `Cleanfeed::RateLimit` | legacy `reject()` path |
+| `crosspost`, `crosspost.*`, `distribution.*`, `group.poison` | group-classification/crosspost section in `filter_art()` | legacy `reject()` path; Followup-specific arithmetic uses `followup_policy_counts()` |
+| `header.*`, `site.*`, `bot.signature`, `html.*`, `cancel.*`, `control.*`, `repost.*`, `approval.*`, `tos.violation` | corresponding deterministic sections in `filter_art()` | legacy `reject()` path |
+| `scoring` | scoring section in `filter_art()` | legacy `reject()` path |
+
+Useful searches from the repository root:
+
+```sh
+grep -n "sub reject_code" cleanfeed
+grep -n "rule-name-here" cleanfeed
+grep -n "reject(" cleanfeed
+grep -n "mode_result\|apply_finding_set" cleanfeed
+```
+
+`reject()` converts legacy human reasons to stable rules through
+`policy_reason_key()` when a caller does not pass a rule explicitly; new code
+should prefer an explicit stable rule whenever practical.  Structured events are
+emitted by `policy_log_event()`.
+
 | Rule | Code | Meaning |
 |---|---|---|
+| `binary.yenc` | `CF-BINARY-YENC` | yEnc payload detected where binary content is not permitted. |
+| `binary.uuencode` | `CF-BINARY-UUENCODE` | uuencoded payload detected where binary content is not permitted. |
+| `binary.base64` | `CF-BINARY-BASE64` | Base64 binary payload detected where binary content is not permitted. |
+| `binary.mime` | `CF-BINARY-MIME` | MIME binary payload detected where binary content is not permitted. |
+| `policy.binary` | `CF-POLICY-BINARY` | Effective peer/hierarchy policy forbids binary payload. |
+| `policy.size` | `CF-POLICY-SIZE` | Effective peer/hierarchy policy size limit was exceeded. |
+| `crosspost` | `CF-CROSSPOST` | Historical/general crosspost limit matched. |
 | `mime.multipart.boundary_missing` | `CF-MIME-BOUNDARY-MISSING` | Multipart Content-Type has no boundary parameter. |
 | `mime.multipart.boundary_not_found` | `CF-MIME-BOUNDARY-NOT-FOUND` | Declared boundary was not found in the bounded scan window. |
 | `mime.base64.payload_missing` | `CF-BASE64-PAYLOAD-MISSING` | Base64 was declared but no plausible payload was found. |
@@ -25,6 +67,14 @@ Automation should use the rule name or `CF-*` code, not the explanatory text. He
 | `path.repeated_token` | `CF-PATH-REPEATED-TOKEN` | One Path component repeats too often. |
 | `anomaly.peer_rate` | `CF-PEER-RATE-ANOMALY` | Peer exceeds the audit rate threshold. |
 | `anomaly.host_rate` | `CF-HOST-RATE-ANOMALY` | Posting host exceeds the audit rate threshold. |
+| `header.subject` | `CF-BAD-SUBJECT` | Subject matched configured/historical rejection logic. |
+| `header.from` | `CF-BAD-FROM` | From matched configured/historical rejection logic. |
+| `body.pattern` | `CF-BAD-BODY` | Body matched a configured bad-body expression. |
+| `body.url` | `CF-BAD-URL` | URL/domain scoring or rejection logic identified a bad URL. |
+| `supersedes` | `CF-SUPERSEDES` | Excessive Supersedes rate/threshold logic matched. |
+| `control` | `CF-CONTROL` | Generic historical control-message rejection. |
+| `scoring` | `CF-SCORING` | Historical scoring threshold rejected the article. |
+| `message_id` | `CF-MESSAGE-ID` | Message-ID history/check logic rejected the article. |
 | `header.invalid` | `CF-HEADER-INVALID` | Malformed or invalid mandatory header. |
 | `site.path` | `CF-BAD-PATH` | Path matched a configured bad-site/path rule. |
 | `site.host` | `CF-BAD-HOST` | Posting/injection host matched a deny rule. |
@@ -60,8 +110,11 @@ Automation should use the rule name or `CF-*` code, not the explanatory text. He
 | `emp.phn` | `CF-EMP-PHN` | Posting identity/newsgroups PHN threshold exceeded; weak shared-injector matches audit by default. |
 | `emp.phr` | `CF-EMP-PHR` | High-risk-group EMP threshold exceeded. |
 | `emp.fsl` | `CF-EMP-FSL` | From/Subject/Lines EMP threshold exceeded. |
+| `other` | `CF-OTHER` | Fallback category for a legacy rejection that has no more specific mapping. |
 
-Other existing binary, policy, content and scoring rules retain their stable codes defined in `cleanfeed`.
+The table mirrors the explicit mappings in `reject_code()`. Unknown future rule
+names are converted deterministically to `CF-<UPPERCASED-RULE>` form; new
+public rules should still be added here when introduced.
 
 ## yEnc multipart semantics
 
@@ -76,9 +129,26 @@ effective policy has `allow_binary = 0`. The `all` scope is intentionally noisy
 and should normally be used only with audit mode.
 
 
+## Newsgroups and Followup-To count semantics
+
+Historical Cleanfeed deliberately distinguishes three sets:
+
+- `grpcnt`: number of targets in `Newsgroups`;
+- `fupcnt`: number of **effective followup targets** — explicit `Followup-To`,
+  otherwise a copy of `Newsgroups`;
+- `grpfupcnt`: unique union of Newsgroups and effective followup targets.
+
+`maxgroups` and several historical crosspost checks intentionally use `fupcnt`;
+this permits, for example, a widely distributed FAQ whose `Followup-To` directs
+discussion to one group.  In 2026.10.1, meow/topic subtraction was corrected so
+values subtracted from `fupcnt` are counted by `followup_policy_counts()` from
+the same effective followup set.  Union counters remain appropriate for rules
+that ask whether a group class appears anywhere in the article's distribution
+or followup routing.
+
 ## PHN structured-event fields
 
-Starting with `2026.07.3-rc3`, `emp.phn` events add:
+Since `2026.07.3-rc3`, `emp.phn` events add:
 
 - `identity_source`: `posting_account`, `injection_posting_host`, `nntp_posting_host`, `path_posted_source`, or `shared_injector`;
 - `identity_strength`: `strong` or `weak`;
