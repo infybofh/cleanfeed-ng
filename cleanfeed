@@ -2437,11 +2437,49 @@ sub set_binary_extension {
     }
 }
 
+# RFC 1847 multipart/signed has exactly two body parts: the signed content
+# and, second, a detached signature whose Content-Type equals the "protocol"
+# parameter (RFC 3156 PGP/MIME, RFC 8551 S/MIME).  That signature is
+# verification data, not a payload.  Return the scan window without it so
+# the MIME attachment checks do not report signed text as a binary.  Only the
+# second part, only a recognised signature protocol and only an exact
+# Content-Type match qualify; the yEnc/uuencode/base64-line detectors keep
+# using the unmodified body, so a large payload labelled as a signature is
+# still caught there.
+sub mime_scan_without_detached_signature {
+    my ($scan) = @_;
+    my $top_ct = $hdr{'Content-Type'} || '';
+    return $scan unless $top_ct =~ m{^\s*multipart/signed\s*(?:;|$)}i;
+
+    my ($protocol) = $top_ct =~ /\bprotocol\s*=\s*"?\s*([^";\s]+)/i;
+    return $scan unless defined $protocol
+        and $protocol =~ m{\Aapplication/(?:pgp-signature|(?:x-)?pkcs7-signature)\z}i;
+    return $scan unless $top_ct =~ /\bboundary\s*=\s*(?:"([^"]+)"|([^;\s]+))/i;
+    my $boundary = quotemeta(defined $1 ? $1 : $2);
+
+    # Split on top-level delimiter lines, keeping the delimiters.
+    my @chunks = split /((?:\A|\r?\n)--$boundary(?:--)?[ \t]*(?=\r?\n|\z))/, $scan;
+    my $part = 0;
+    for my $i (0 .. $#chunks) {
+        next unless $chunks[$i] =~ /\A(?:\r?\n)?--$boundary/;   # delimiter
+        last if $chunks[$i] =~ /--$boundary--[ \t]*\z/;           # close delimiter
+        $part++;
+        next unless $part == 2 and defined $chunks[$i + 1];
+        my ($headers) = $chunks[$i + 1] =~ /\A\r?\n(.*?)(?:\r?\n\r?\n|\z)/s;
+        if (defined $headers
+            and $headers =~ /(?:\A|\n)Content-Type:\s*\Q$protocol\E\s*(?:;|\r?\n|\z)/i) {
+            $chunks[$i + 1] = "\n";
+        }
+        last;
+    }
+    return join '', @chunks;
+}
+
 # Return a descriptive string for a MIME binary attachment, or false.
 sub mime_binary_type {
     return 0 unless $config{detect_mime_binaries};
 
-    my $scan = binary_scan_body();
+    my $scan = mime_scan_without_detached_signature(binary_scan_body());
     my $top_ct = $hdr{'Content-Type'} || '';
     my $top_cd = $hdr{'Content-Disposition'} || '';
     my $top_ce = $hdr{'Content-Transfer-Encoding'} || '';
