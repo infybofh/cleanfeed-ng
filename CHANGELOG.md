@@ -2,6 +2,19 @@
 
 All notable changes to cleanfeed-ng are documented here.
 
+## Unreleased
+
+### Fixed
+- PGP/MIME (RFC 3156) and S/MIME (RFC 8551) signed text articles are no
+  longer rejected as `binary.mime` / `CF-BINARY-MIME` "misplaced binary".
+  In a `multipart/signed` article whose `protocol` is
+  `application/pgp-signature` or `application/(x-)pkcs7-signature`, the
+  second body part is the detached signature (RFC 1847); it is now excluded
+  from MIME attachment detection when its Content-Type equals the protocol.
+  Other parts, other protocols and signature-labelled parts outside
+  `multipart/signed` are still inspected, and the yEnc/uuencode/base64-line
+  detectors still scan the unmodified body.
+
 ## 2026.10.1 - CalVer stable release
 
 ### Fixed
